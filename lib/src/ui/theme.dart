@@ -17,6 +17,13 @@ class AppTheme {
       surface: isDark ? const Color(0xFF1E1F22) : const Color(0xFFF7F7F8),
     );
     final base = ThemeData(colorScheme: scheme, useMaterial3: true, fontFamily: fontFamily);
+    final fieldBorder = isDark ? const Color(0xFF3C3F44) : const Color(0xFFD3D4D8);
+    final fieldFill = isDark ? const Color(0xFF303237) : Colors.white;
+    final muted = scheme.onSurface.withValues(alpha: 0.6);
+    OutlineInputBorder outline(Color color, [double width = 1]) => OutlineInputBorder(
+          borderRadius: BorderRadius.circular(8),
+          borderSide: BorderSide(color: color, width: width),
+        );
     return base.copyWith(
       scaffoldBackgroundColor: scheme.surface,
       visualDensity: VisualDensity.compact,
@@ -30,18 +37,31 @@ class AppTheme {
         thickness: 1,
         color: isDark ? const Color(0xFF34363A) : const Color(0xFFDDDEE1),
       ),
+      // Campos e selects: o texto tinha 8px acima e abaixo e encostava na
+      // borda; o respiro aqui vale para as três janelas de diálogo e para a
+      // busca da barra de ferramentas.
       inputDecorationTheme: InputDecorationTheme(
         isDense: true,
         filled: true,
-        fillColor: isDark ? const Color(0xFF2A2C30) : Colors.white,
-        contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(6),
-          borderSide: BorderSide(color: isDark ? const Color(0xFF3C3F44) : const Color(0xFFD3D4D8)),
-        ),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(6),
-          borderSide: BorderSide(color: isDark ? const Color(0xFF3C3F44) : const Color(0xFFD3D4D8)),
+        fillColor: fieldFill,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 13),
+        border: outline(fieldBorder),
+        enabledBorder: outline(fieldBorder),
+        focusedBorder: outline(accent, 1.6),
+        labelStyle: TextStyle(fontSize: 13, color: muted),
+        floatingLabelStyle: TextStyle(fontSize: 12.5, color: muted),
+        hintStyle: TextStyle(fontSize: 13, color: scheme.onSurface.withValues(alpha: 0.45)),
+        helperStyle: TextStyle(fontSize: 11.5, color: muted),
+        prefixIconColor: muted,
+      ),
+      dialogTheme: DialogThemeData(
+        backgroundColor: isDark ? const Color(0xFF25272B) : const Color(0xFFF2F2F4),
+        surfaceTintColor: Colors.transparent,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        titleTextStyle: base.textTheme.titleLarge?.copyWith(
+          fontSize: 17,
+          fontWeight: FontWeight.w600,
+          color: scheme.onSurface,
         ),
       ),
       tooltipTheme: const TooltipThemeData(waitDuration: Duration(milliseconds: 500)),

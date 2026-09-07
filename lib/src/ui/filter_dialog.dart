@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../model/column_meta.dart';
 import '../model/filter.dart';
 import '../state/app_controller.dart';
+import 'dialogs.dart';
 
 /// Editor for a single rule of the filter chain.
 class FilterDialog extends StatefulWidget {
@@ -133,105 +134,10 @@ class _FilterDialogState extends State<FilterDialog> {
     final ops = _opsForColumn;
     if (!ops.contains(_op)) _op = ops.first;
 
-    return AlertDialog(
-      title: Text(widget.initial == null ? 'Novo filtro' : 'Editar filtro'),
-      contentPadding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
-      content: SizedBox(
-        width: 460,
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              if (!widget.isFirst) ...[
-                Row(
-                  children: [
-                    const Text('Combinar com os filtros anteriores usando'),
-                    const SizedBox(width: 12),
-                    SegmentedButton<FilterJoin>(
-                      style: const ButtonStyle(visualDensity: VisualDensity.compact),
-                      segments: const [
-                        ButtonSegment(value: FilterJoin.and, label: Text('E')),
-                        ButtonSegment(value: FilterJoin.or, label: Text('OU')),
-                      ],
-                      selected: {_join},
-                      onSelectionChanged: (s) => setState(() => _join = s.first),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 16),
-              ],
-              DropdownButtonFormField<int>(
-                initialValue: _column,
-                decoration: const InputDecoration(labelText: 'Coluna'),
-                isExpanded: true,
-                items: [
-                  for (var i = 0; i < columns.length; i++)
-                    DropdownMenuItem(value: i, child: Text(columns[i].name)),
-                ],
-                onChanged: (value) {
-                  if (value == null) return;
-                  setState(() {
-                    _column = value;
-                    _values = <String>{};
-                    _distinct = null;
-                    if (_op == FilterOp.inSet) unawaited(_loadDistinct());
-                  });
-                },
-              ),
-              const SizedBox(height: 12),
-              DropdownButtonFormField<FilterOp>(
-                initialValue: ops.contains(_op) ? _op : ops.first,
-                decoration: const InputDecoration(labelText: 'Condição'),
-                isExpanded: true,
-                items: [
-                  for (final op in ops) DropdownMenuItem(value: op, child: Text(op.label)),
-                ],
-                onChanged: (value) {
-                  if (value == null) return;
-                  setState(() {
-                    _op = value;
-                    if (_op == FilterOp.inSet && _distinct == null) unawaited(_loadDistinct());
-                  });
-                },
-              ),
-              const SizedBox(height: 12),
-              if (_op == FilterOp.inSet)
-                _valuePicker(context)
-              else if (_op.needsValue) ...[
-                TextField(
-                  controller: _value,
-                  autofocus: true,
-                  decoration: InputDecoration(
-                    labelText: _op.needsSecondValue ? 'De' : 'Valor',
-                    hintText: _hintFor(columns[_column]),
-                  ),
-                  onChanged: (_) => setState(() {}),
-                  onSubmitted: (_) => _submit(),
-                ),
-                if (_op.needsSecondValue) ...[
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: _value2,
-                    decoration: const InputDecoration(labelText: 'Até'),
-                    onChanged: (_) => setState(() {}),
-                    onSubmitted: (_) => _submit(),
-                  ),
-                ],
-              ],
-              if (_op != FilterOp.isEmpty && _op != FilterOp.isNotEmpty)
-                CheckboxListTile(
-                  value: _caseSensitive,
-                  onChanged: (v) => setState(() => _caseSensitive = v ?? false),
-                  dense: true,
-                  contentPadding: EdgeInsets.zero,
-                  controlAffinity: ListTileControlAffinity.leading,
-                  title: const Text('Diferenciar maiúsculas de minúsculas'),
-                ),
-            ],
-          ),
-        ),
-      ),
+    return AppDialog(
+      title: widget.initial == null ? 'Novo filtro' : 'Editar filtro',
+      subtitle: 'Esconde registros da grade sem alterar o arquivo.',
+      width: 480,
       actions: [
         TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancelar')),
         FilledButton(
@@ -239,6 +145,101 @@ class _FilterDialogState extends State<FilterDialog> {
           child: Text(widget.initial == null ? 'Adicionar' : 'Salvar'),
         ),
       ],
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (!widget.isFirst) ...[
+            Row(
+              children: [
+                const Expanded(child: Text('Combinar com os filtros anteriores usando')),
+                const SizedBox(width: 12),
+                SegmentedButton<FilterJoin>(
+                  style: const ButtonStyle(visualDensity: VisualDensity.compact),
+                  segments: const [
+                    ButtonSegment(value: FilterJoin.and, label: Text('E')),
+                    ButtonSegment(value: FilterJoin.or, label: Text('OU')),
+                  ],
+                  selected: {_join},
+                  onSelectionChanged: (s) => setState(() => _join = s.first),
+                ),
+              ],
+            ),
+            const SizedBox(height: kBlockGap),
+          ],
+          AppSelect<int>(
+            label: 'Coluna',
+            value: _column,
+            items: [
+              for (var i = 0; i < columns.length; i++)
+                DropdownMenuItem(value: i, child: Text(columns[i].name)),
+            ],
+            onChanged: (value) {
+              if (value == null) return;
+              setState(() {
+                _column = value;
+                _values = <String>{};
+                _distinct = null;
+                if (_op == FilterOp.inSet) unawaited(_loadDistinct());
+              });
+            },
+          ),
+          const SizedBox(height: kFieldGap),
+          AppSelect<FilterOp>(
+            label: 'Condição',
+            value: ops.contains(_op) ? _op : ops.first,
+            items: [
+              for (final op in ops) DropdownMenuItem(value: op, child: Text(op.label)),
+            ],
+            onChanged: (value) {
+              if (value == null) return;
+              setState(() {
+                _op = value;
+                if (_op == FilterOp.inSet && _distinct == null) unawaited(_loadDistinct());
+              });
+            },
+          ),
+          if (_op == FilterOp.inSet) ...[
+            const SizedBox(height: kBlockGap),
+            _valuePicker(context),
+          ] else if (_op.needsValue) ...[
+            const SizedBox(height: kFieldGap),
+            TextField(
+              controller: _value,
+              autofocus: true,
+              style: const TextStyle(fontSize: 13),
+              decoration: InputDecoration(
+                labelText: _op.needsSecondValue ? 'De' : 'Valor',
+                hintText: _hintFor(columns[_column]),
+              ),
+              onChanged: (_) => setState(() {}),
+              onSubmitted: (_) => _submit(),
+            ),
+            if (_op.needsSecondValue) ...[
+              const SizedBox(height: kFieldGap),
+              TextField(
+                controller: _value2,
+                style: const TextStyle(fontSize: 13),
+                decoration: const InputDecoration(labelText: 'Até'),
+                onChanged: (_) => setState(() {}),
+                onSubmitted: (_) => _submit(),
+              ),
+            ],
+          ],
+          if (_op != FilterOp.isEmpty && _op != FilterOp.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            CheckboxListTile(
+              value: _caseSensitive,
+              onChanged: (v) => setState(() => _caseSensitive = v ?? false),
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+              controlAffinity: ListTileControlAffinity.leading,
+              title: const Text('Diferenciar maiúsculas de minúsculas',
+                  style: TextStyle(fontSize: 13)),
+            ),
+          ],
+        ],
+      ),
     );
   }
 
@@ -260,15 +261,15 @@ class _FilterDialogState extends State<FilterDialog> {
 
   Widget _valuePicker(BuildContext context) {
     if (_loadingValues) {
-      return const SizedBox(
+      return ListPanel(
         height: 300,
-        child: Center(
+        child: const Center(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)),
-              SizedBox(height: 10),
-              Text('Lendo os valores da coluna…'),
+              SizedBox(height: 12),
+              Text('Lendo os valores da coluna…', style: TextStyle(fontSize: 13)),
             ],
           ),
         ),
@@ -279,68 +280,80 @@ class _FilterDialogState extends State<FilterDialog> {
     final shown = needle.isEmpty
         ? all
         : all.where((v) => v.toLowerCase().contains(needle)).toList(growable: false);
+    final muted = Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6);
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        TextField(
-          controller: _valueSearch,
-          decoration: const InputDecoration(
-            prefixIcon: Icon(Icons.search, size: 16),
-            hintText: 'Buscar valores…',
-          ),
-          onChanged: (_) => setState(() {}),
-        ),
-        const SizedBox(height: 8),
         Row(
           children: [
-            Text('${_values.length} de ${all.length} selecionados',
-                style: Theme.of(context).textTheme.bodySmall),
+            const BlockLabel('Valores'),
             const Spacer(),
             TextButton(
-              onPressed: () => setState(() => _values = Set<String>.from(shown)),
+              onPressed: shown.isEmpty
+                  ? null
+                  : () => setState(() => _values = Set<String>.from(shown)),
               child: const Text('Marcar visíveis'),
             ),
+            const SizedBox(width: 4),
             TextButton(
-              onPressed: () => setState(() => _values = <String>{}),
+              onPressed: _values.isEmpty ? null : () => setState(() => _values = <String>{}),
               child: const Text('Limpar'),
             ),
           ],
         ),
-        SizedBox(
-          height: 240,
-          child: Material(
-            color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.4),
-            borderRadius: BorderRadius.circular(6),
-            child: ListView.builder(
-              itemCount: shown.length,
-              itemExtent: 30,
-              itemBuilder: (context, index) {
-                final value = shown[index];
-                return CheckboxListTile(
-                  value: _values.contains(value),
-                  dense: true,
-                  visualDensity: VisualDensity.compact,
-                  controlAffinity: ListTileControlAffinity.leading,
-                  title: Text(
-                    value.isEmpty ? '(vazio)' : value,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 12.5,
-                      fontStyle: value.isEmpty ? FontStyle.italic : FontStyle.normal,
-                    ),
+        const SizedBox(height: 8),
+        AppSearchField(
+          controller: _valueSearch,
+          hintText: 'Buscar valores…',
+          onChanged: (_) => setState(() {}),
+        ),
+        const SizedBox(height: 10),
+        ListPanel(
+          height: 232,
+          child: shown.isEmpty
+              ? Center(
+                  child: Text(
+                    all.isEmpty ? 'A coluna não tem valores.' : 'Nenhum valor com esse texto.',
+                    style: TextStyle(fontSize: 13, color: muted),
                   ),
-                  onChanged: (checked) => setState(() {
-                    if (checked ?? false) {
-                      _values.add(value);
-                    } else {
-                      _values.remove(value);
-                    }
-                  }),
-                );
-              },
-            ),
-          ),
+                )
+              : ListView.builder(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  itemCount: shown.length,
+                  itemExtent: 30,
+                  itemBuilder: (context, index) {
+                    final value = shown[index];
+                    return CheckboxListTile(
+                      value: _values.contains(value),
+                      dense: true,
+                      visualDensity: VisualDensity.compact,
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+                      controlAffinity: ListTileControlAffinity.leading,
+                      title: Text(
+                        value.isEmpty ? '(vazio)' : value,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 12.5,
+                          fontStyle: value.isEmpty ? FontStyle.italic : FontStyle.normal,
+                        ),
+                      ),
+                      onChanged: (checked) => setState(() {
+                        if (checked ?? false) {
+                          _values.add(value);
+                        } else {
+                          _values.remove(value);
+                        }
+                      }),
+                    );
+                  },
+                ),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          '${_values.length} de ${all.length} selecionados',
+          style: Theme.of(context).textTheme.bodySmall?.copyWith(color: muted),
         ),
       ],
     );

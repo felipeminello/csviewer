@@ -156,8 +156,70 @@ void main() {
       expect(tester.getRect(button).right,
           lessThanOrEqualTo(tester.getRect(viewport.first).right + 0.5),
           reason: 'Exportar cortado em $width');
+      // A busca tem padding próprio: precisa caber nos 46px da barra.
+      expect(tester.getSize(find.byType(TextField).first).height, lessThan(42));
       expect(tester.takeException(), isNull);
     }
+  });
+
+  testWidgets('as três janelas de diálogo cabem numa tela pequena', (tester) async {
+    tester.view.physicalSize = const Size(900, 620);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(RepaintBoundary(
+      child: MaterialApp(
+        theme: AppTheme.light(fontFamily: 'Roboto'),
+        home: HomePage(controller: controller),
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    Future<void> open(String tooltip, String title, String shot) async {
+      await tester.tap(find.byTooltip(tooltip));
+      await tester.pumpAndSettle();
+      expect(find.text(title), findsOneWidget);
+      // Um estouro de layout (a faixa listrada) chega aqui como exceção.
+      expect(tester.takeException(), isNull, reason: 'layout de "$title" estourou');
+      await capture(tester, shot);
+      await tester.tap(find.text('Cancelar').hitTestable().first);
+      await tester.pumpAndSettle();
+    }
+
+    await open('Adicionar filtro (⌘L)', 'Novo filtro', '08-dialogo-filtro-pequeno');
+    await open('Delimitador, codificação e cabeçalho', 'Opções de leitura', '09-dialogo-leitura');
+
+    // A janela de colunas fecha em "Concluir" (o botão da barra, nessa
+    // largura, ainda mostra o rótulo).
+    await tester.tap(find.widgetWithText(TextButton, 'Colunas'));
+    await tester.pumpAndSettle();
+    expect(find.text('8 de 8 visíveis na grade'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await capture(tester, '10-dialogo-colunas');
+    await tester.tap(find.text('Concluir'));
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets('a lista de valores do filtro rola dentro da janela', (tester) async {
+    tester.view.physicalSize = const Size(900, 620);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(MaterialApp(
+      theme: AppTheme.light(fontFamily: 'Roboto'),
+      home: HomePage(controller: controller),
+    ));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Adicionar filtro (⌘L)'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('contém'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('é um de').last);
+    await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 200)));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Valores'), findsOneWidget);
+    expect(find.textContaining('selecionados'), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('o painel do registro mostra todos os campos da linha', (tester) async {

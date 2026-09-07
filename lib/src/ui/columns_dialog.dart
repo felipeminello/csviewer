@@ -1,6 +1,9 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import '../state/app_controller.dart';
+import 'dialogs.dart';
 
 /// Show / hide columns, the way CSViewer's column chooser works.
 class ColumnsDialog extends StatefulWidget {
@@ -23,53 +26,24 @@ class _ColumnsDialogState extends State<ColumnsDialog> {
       for (var i = 0; i < columns.length; i++)
         if (needle.isEmpty || columns[i].name.toLowerCase().contains(needle)) i,
     ];
+    var visible = 0;
+    for (var i = 0; i < columns.length; i++) {
+      if (widget.controller.isColumnVisible(i)) visible++;
+    }
+    // A altura vem do arquivo, não da busca: assim a janela não pula de
+    // tamanho enquanto se digita, e arquivos estreitos não abrem um vazio.
+    final listHeight = math.min(360.0, math.max(132.0, columns.length * 30.0 + 8));
 
-    return AlertDialog(
-      title: const Text('Colunas'),
-      contentPadding: const EdgeInsets.fromLTRB(24, 12, 24, 0),
-      content: SizedBox(
-        width: 380,
-        height: 420,
-        child: Column(
-          children: [
-            TextField(
-              decoration: const InputDecoration(
-                prefixIcon: Icon(Icons.search, size: 16),
-                hintText: 'Buscar coluna…',
-              ),
-              onChanged: (value) => setState(() => _search = value),
-            ),
-            const SizedBox(height: 8),
-            Expanded(
-              child: ListView.builder(
-                itemCount: indices.length,
-                itemExtent: 36,
-                itemBuilder: (context, position) {
-                  final index = indices[position];
-                  return CheckboxListTile(
-                    dense: true,
-                    controlAffinity: ListTileControlAffinity.leading,
-                    contentPadding: EdgeInsets.zero,
-                    value: widget.controller.isColumnVisible(index),
-                    title: Text(
-                      columns[index].name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontSize: 12.5),
-                    ),
-                    onChanged: (value) => setState(
-                      () => widget.controller.setColumnVisible(index, value ?? true),
-                    ),
-                  );
-                },
-              ),
-            ),
-          ],
-        ),
-      ),
+    return AppDialog(
+      title: 'Colunas',
+      subtitle: '$visible de ${columns.length} visíveis na grade',
+      width: 420,
+      scrollable: false,
       actions: [
         TextButton(
-          onPressed: () => setState(widget.controller.showAllColumns),
+          onPressed: visible == columns.length
+              ? null
+              : () => setState(widget.controller.showAllColumns),
           child: const Text('Mostrar todas'),
         ),
         FilledButton(
@@ -77,6 +51,54 @@ class _ColumnsDialogState extends State<ColumnsDialog> {
           child: const Text('Concluir'),
         ),
       ],
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          AppSearchField(
+            hintText: 'Buscar coluna…',
+            onChanged: (value) => setState(() => _search = value),
+          ),
+          const SizedBox(height: 12),
+          ListPanel(
+            height: listHeight,
+            child: indices.isEmpty
+                ? Center(
+                    child: Text(
+                      'Nenhuma coluna com esse texto.',
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6),
+                      ),
+                    ),
+                  )
+                : ListView.builder(
+                    padding: const EdgeInsets.symmetric(vertical: 4),
+                    itemCount: indices.length,
+                    itemExtent: 30,
+                    itemBuilder: (context, position) {
+                      final index = indices[position];
+                      return CheckboxListTile(
+                        dense: true,
+                        visualDensity: VisualDensity.compact,
+                        controlAffinity: ListTileControlAffinity.leading,
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+                        value: widget.controller.isColumnVisible(index),
+                        title: Text(
+                          columns[index].name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontSize: 12.5),
+                        ),
+                        onChanged: (value) => setState(
+                          () => widget.controller.setColumnVisible(index, value ?? true),
+                        ),
+                      );
+                    },
+                  ),
+          ),
+        ],
+      ),
     );
   }
 }

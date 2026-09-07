@@ -11,6 +11,7 @@ import '../services/csv_parser.dart';
 import '../state/app_controller.dart';
 import 'columns_dialog.dart';
 import 'data_grid.dart';
+import 'dialogs.dart';
 import 'filter_bar.dart';
 import 'filter_dialog.dart';
 import 'inspector.dart';
@@ -449,6 +450,9 @@ class _Toolbar extends StatelessWidget {
                   decoration: InputDecoration(
                     hintText: 'Buscar (⌘F)',
                     hintStyle: const TextStyle(fontSize: 12),
+                    // Mais apertado que os campos dos diálogos: aqui a altura é
+                    // a dos 46px da barra, não a de um formulário.
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
                     prefixIcon: const Icon(Icons.search, size: 16),
                     prefixIconConstraints: const BoxConstraints(minWidth: 30, minHeight: 30),
                     suffixIcon: controller.quickSearch.isEmpty
@@ -579,60 +583,10 @@ class _ReadOptionsDialogState extends State<_ReadOptionsDialog> {
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Text('Opções de leitura'),
-      content: SizedBox(
-        width: 380,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            DropdownButtonFormField<String>(
-              initialValue: _delimiter,
-              isExpanded: true,
-              decoration: const InputDecoration(labelText: 'Delimitador'),
-              items: [
-                for (final d in supportedDelimiters)
-                  DropdownMenuItem(value: d, child: Text(delimiterLabel(d))),
-              ],
-              onChanged: (value) => setState(() => _delimiter = value ?? ','),
-            ),
-            const SizedBox(height: 12),
-            DropdownButtonFormField<String>(
-              initialValue: _encoding,
-              isExpanded: true,
-              decoration: const InputDecoration(labelText: 'Codificação'),
-              items: [
-                for (final e in supportedEncodings)
-                  DropdownMenuItem(value: e, child: Text(e)),
-              ],
-              onChanged: (value) => setState(() => _encoding = value ?? encodingAuto),
-            ),
-            const SizedBox(height: 4),
-            SwitchListTile(
-              value: _hasHeader,
-              dense: true,
-              contentPadding: EdgeInsets.zero,
-              title: const Text('A primeira linha contém os nomes das colunas'),
-              onChanged: (value) => setState(() => _hasHeader = value),
-            ),
-            const SizedBox(height: 4),
-            DropdownButtonFormField<ReadMode>(
-              initialValue: _mode,
-              isExpanded: true,
-              decoration: const InputDecoration(
-                labelText: 'Leitura',
-                helperText: 'Arquivos grandes são lidos do disco sob demanda.',
-              ),
-              items: const [
-                DropdownMenuItem(value: ReadMode.auto, child: Text('Automático')),
-                DropdownMenuItem(value: ReadMode.memory, child: Text('Carregar na memória')),
-                DropdownMenuItem(value: ReadMode.streaming, child: Text('Streaming do disco')),
-              ],
-              onChanged: (value) => setState(() => _mode = value ?? ReadMode.auto),
-            ),
-          ],
-        ),
-      ),
+    return AppDialog(
+      title: 'Opções de leitura',
+      subtitle: 'Para quando a detecção automática errar o formato do arquivo.',
+      width: 420,
       actions: [
         TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancelar')),
         FilledButton(
@@ -647,6 +601,60 @@ class _ReadOptionsDialogState extends State<_ReadOptionsDialog> {
           child: const Text('Aplicar'),
         ),
       ],
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          AppSelect<String>(
+            label: 'Delimitador',
+            value: _delimiter,
+            items: [
+              for (final d in supportedDelimiters)
+                DropdownMenuItem(value: d, child: Text(delimiterLabel(d))),
+            ],
+            onChanged: (value) => setState(() => _delimiter = value ?? ','),
+          ),
+          const SizedBox(height: kFieldGap),
+          AppSelect<String>(
+            label: 'Codificação',
+            value: _encoding,
+            items: [
+              for (final e in supportedEncodings) DropdownMenuItem(value: e, child: Text(e)),
+            ],
+            onChanged: (value) => setState(() => _encoding = value ?? encodingAuto),
+          ),
+          const SizedBox(height: kFieldGap),
+          AppSelect<ReadMode>(
+            label: 'Leitura',
+            value: _mode,
+            helperText: 'Arquivos grandes são lidos do disco sob demanda.',
+            items: const [
+              DropdownMenuItem(value: ReadMode.auto, child: Text('Automático')),
+              DropdownMenuItem(value: ReadMode.memory, child: Text('Carregar na memória')),
+              DropdownMenuItem(value: ReadMode.streaming, child: Text('Streaming do disco')),
+            ],
+            onChanged: (value) => setState(() => _mode = value ?? ReadMode.auto),
+          ),
+          const SizedBox(height: kBlockGap),
+          // O interruptor ganha a mesma moldura dos campos para não ficar
+          // solto entre os selects.
+          ListPanel(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+              child: SwitchListTile(
+                value: _hasHeader,
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                title: const Text(
+                  'A primeira linha contém os nomes das colunas',
+                  style: TextStyle(fontSize: 13),
+                ),
+                onChanged: (value) => setState(() => _hasHeader = value),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
