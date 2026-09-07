@@ -183,9 +183,9 @@ void main() {
     await capture(tester, '07-streaming');
   });
 
-  testWidgets('roda e trackpad rolam a grade na horizontal', (tester) async {
-    // Linhas suficientes para a lista vertical também ter para onde rolar: é
-    // com os dois eixos disputando o evento que o gesto horizontal se perdia.
+  /// Grade que transborda nos dois eixos: muitas linhas para a lista vertical
+  /// ter para onde rolar, e colunas largas para a grade passar da janela.
+  Future<AppController> pumpWideGrid(WidgetTester tester) async {
     final buffer = StringBuffer(_sample.split('\n').first)..writeln();
     for (var i = 0; i < 400; i++) {
       buffer.writeln('PED-${(i + 1).toString().padLeft(5, '0')};Cliente $i;Recife;Livros;'
@@ -212,12 +212,15 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-
-    // Colunas largas o bastante para a grade transbordar a janela.
     for (var c = 0; c < wide.columns.length; c++) {
       wide.setColumnWidth(c, 320);
     }
     await tester.pumpAndSettle();
+    return wide;
+  }
+
+  testWidgets('roda e trackpad rolam a grade na horizontal', (tester) async {
+    await pumpWideGrid(tester);
 
     final ScrollController horizontal = tester
         .widget<SingleChildScrollView>(
@@ -260,6 +263,51 @@ void main() {
     await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
     await tester.pump();
     expect(horizontal.offset, 240);
+  });
+
+  testWidgets('a grade só constrói as colunas sob a viewport', (tester) async {
+    final wide = await pumpWideGrid(tester);
+    final ScrollController horizontal = tester
+        .widget<SingleChildScrollView>(
+          find.descendant(
+            of: find.byType(DataGrid),
+            matching: find.byType(SingleChildScrollView),
+          ),
+        )
+        .controller!;
+
+    // No começo da grade, as colunas do fim nem existem na árvore.
+    expect(find.text('pedido'), findsOneWidget);
+    expect(find.text('Cliente 0'), findsOneWidget);
+    expect(find.text('status'), findsNothing);
+    expect(find.text('data_pedido'), findsNothing);
+
+    horizontal.jumpTo(horizontal.position.maxScrollExtent);
+    await tester.pumpAndSettle();
+    // No fim é a vez das primeiras saírem — cabeçalho e células juntos.
+    expect(find.text('status'), findsOneWidget);
+    expect(find.text('Pago'), findsWidgets);
+    expect(find.text('pedido'), findsNothing);
+    expect(find.text('Cliente 0'), findsNothing);
+
+    // Ocultar uma coluna troca a lista sob a janela sem necessariamente movê-la.
+    horizontal.jumpTo(0);
+    await tester.pumpAndSettle();
+    expect(find.text('cliente'), findsOneWidget);
+    wide.setColumnVisible(1, false);
+    await tester.pumpAndSettle();
+    expect(find.text('cliente'), findsNothing);
+    expect(find.text('Cliente 0'), findsNothing);
+    expect(find.text('cidade'), findsOneWidget);
+    horizontal.jumpTo(horizontal.position.maxScrollExtent);
+    await tester.pumpAndSettle();
+
+    // Alargar uma coluna com a grade rolada mexe na extensão do scroll durante
+    // o layout; a janela se reajusta no quadro seguinte, sem quebrar.
+    wide.setColumnWidth(0, 900);
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    expect(find.text('status'), findsOneWidget);
   });
 
   testWidgets('busca rápida filtra e destaca', (tester) async {

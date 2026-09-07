@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 
 import '../data/csv_source.dart';
@@ -33,8 +34,31 @@ class _DataGridState extends State<DataGrid> {
   int? _hoveredRow;
   double _viewportHeight = 0;
 
+  // Horizontal virtualisation. A wide CSV has hundreds of columns per row, and
+  // building every one of them for every row on screen is what makes sideways
+  // scrolling crawl. Only the columns under the viewport — plus one on each
+  // side, so a partly revealed column is already there — become widgets; the
+  // ones to their left are replaced by a single spacer that keeps the rest in
+  // place. What is off to the right needs no spacer: the row is stretched to
+  // the full content width by the list anyway.
+  static const int _overscan = 1;
+  List<int> _columns = const [];
+  List<int> _window = const [];
+  double _leading = 0;
+  int _first = 0;
+  int _last = 0;
+  double _numberWidth = 0;
+  double _viewportWidth = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _horizontal.addListener(_onHorizontalScroll);
+  }
+
   @override
   void dispose() {
+    _horizontal.removeListener(_onHorizontalScroll);
     _vertical.dispose();
     _horizontal.dispose();
     _focusNode.dispose();
@@ -99,6 +123,54 @@ class _DataGridState extends State<DataGrid> {
         return KeyEventResult.handled;
     }
     return KeyEventResult.ignored;
+  }
+
+  void _onHorizontalScroll() {
+    if (!_updateColumnWindow()) return;
+    if (SchedulerBinding.instance.schedulerPhase == SchedulerPhase.persistentCallbacks) {
+      // The position also notifies mid-layout, when a resize changes the
+      // content width; rebuilding then would be too late for this frame.
+      SchedulerBinding.instance.addPostFrameCallback((_) {
+        if (mounted) setState(() {});
+      });
+    } else {
+      setState(() {});
+    }
+  }
+
+  /// Clips the visible columns to the horizontal window. Returns `true` when
+  /// the window moved and the grid has to be rebuilt.
+  bool _updateColumnWindow() {
+    final start = (_horizontal.hasClients ? _horizontal.offset : 0.0) - _numberWidth;
+    final end = start + _viewportWidth;
+    var first = 0;
+    var leading = 0.0;
+    while (first < _columns.length) {
+      final width = controller.columnWidth(_columns[first]);
+      if (leading + width > start) break;
+      leading += width;
+      first++;
+    }
+    for (var i = 0; i < _overscan && first > 0; i++) {
+      leading -= controller.columnWidth(_columns[--first]);
+    }
+    var last = first;
+    var x = leading;
+    while (last < _columns.length && x < end) {
+      x += controller.columnWidth(_columns[last]);
+      last++;
+    }
+    for (var i = 0; i < _overscan && last < _columns.length; i++) {
+      last++;
+    }
+    final moved = first != _first || last != _last || leading != _leading;
+    _first = first;
+    _last = last;
+    _leading = leading;
+    // Recut even when the window sat still: hiding a column keeps the same
+    // slice bounds over a different list of columns.
+    _window = _columns.sublist(first, last);
+    return moved;
   }
 
   void _scrollHorizontally(double delta) {
@@ -197,6 +269,10 @@ class _DataGridState extends State<DataGrid> {
         builder: (context, constraints) {
           _viewportHeight = constraints.maxHeight;
           final width = math.max(totalWidth, constraints.maxWidth);
+          _columns = columns;
+          _numberWidth = numberWidth;
+          _viewportWidth = constraints.maxWidth;
+          _updateColumnWindow();
           return Scrollbar(
             controller: _vertical,
             // The list scrolls inside the horizontal viewport, so notifications
@@ -220,9 +296,10 @@ class _DataGridState extends State<DataGrid> {
                       children: [
                         _HeaderRow(
                           controller: controller,
-                          columns: columns,
+                          columns: _window,
                           colors: colors,
                           numberWidth: numberWidth,
+                          leading: _leading,
                           filler: width - totalWidth,
                           onFilterColumn: widget.onFilterColumn,
                           onAutoFit: _autoFit,
@@ -239,7 +316,6 @@ class _DataGridState extends State<DataGrid> {
                                     itemBuilder: (context, index) => _buildRow(
                                       context,
                                       index,
-                                      columns,
                                       colors,
                                       numberWidth,
                                       width - totalWidth,
@@ -262,7 +338,6 @@ class _DataGridState extends State<DataGrid> {
   Widget _buildRow(
     BuildContext context,
     int viewIndex,
-    List<int> columns,
     GridColors colors,
     double numberWidth,
     double filler,
@@ -301,7 +376,9 @@ class _DataGridState extends State<DataGrid> {
                   width: numberWidth,
                   colors: colors,
                 ),
-                for (final c in columns)
+                // Stands in for every column scrolled off to the left.
+                if (_leading > 0) SizedBox(width: _leading),
+                for (final c in _window)
                   if (row == null)
                     _PendingCell(width: controller.columnWidth(c), colors: colors)
                   else
@@ -472,6 +549,7 @@ class _HeaderRow extends StatelessWidget {
     required this.columns,
     required this.colors,
     required this.numberWidth,
+    required this.leading,
     required this.filler,
     required this.onFilterColumn,
     required this.onAutoFit,
@@ -481,6 +559,7 @@ class _HeaderRow extends StatelessWidget {
   final List<int> columns;
   final GridColors colors;
   final double numberWidth;
+  final double leading;
   final double filler;
   final ColumnFilterRequest onFilterColumn;
   final void Function(int column) onAutoFit;
@@ -504,6 +583,7 @@ class _HeaderRow extends StatelessWidget {
             child: Icon(Icons.tag,
                 size: 13, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.4)),
           ),
+          if (leading > 0) SizedBox(width: leading),
           for (final c in columns)
             _HeaderCell(
               controller: controller,
