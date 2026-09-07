@@ -136,6 +136,30 @@ void main() {
     await capture(tester, '04-dialogo-filtro');
   });
 
+  testWidgets('a barra de ferramentas nunca corta o botão Exportar', (tester) async {
+    // O bloco de botões dividia o espaço livre com o nome do arquivo e sobrava
+    // pouco: entre ~860 e ~1200 de largura o "Exportar" ficava pela metade.
+    for (final width in <double>[520, 700, 860, 960, 1100, 1200, 1440, 1800]) {
+      tester.view.physicalSize = Size(width, 600);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(MaterialApp(
+        theme: AppTheme.light(fontFamily: 'Roboto'),
+        home: HomePage(controller: controller),
+      ));
+      await tester.pumpAndSettle();
+
+      // Em janelas estreitas os rótulos viram ícones — mas o botão continua lá.
+      final button = find.byTooltip('Salvar a visão atual (filtrada e ordenada) como CSV');
+      expect(button, findsOneWidget, reason: 'sem botão Exportar em $width');
+      final viewport = find.ancestor(of: button, matching: find.byType(SingleChildScrollView));
+      expect(tester.getRect(button).right,
+          lessThanOrEqualTo(tester.getRect(viewport.first).right + 0.5),
+          reason: 'Exportar cortado em $width');
+      expect(tester.takeException(), isNull);
+    }
+  });
+
   testWidgets('o painel do registro mostra todos os campos da linha', (tester) async {
     await pumpApp(tester);
     await tester.tap(find.text('PED-00003'));

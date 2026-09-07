@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:desktop_drop/desktop_drop.dart';
 import 'package:file_selector/file_selector.dart' as fs;
 import 'package:flutter/material.dart';
@@ -276,6 +278,49 @@ class HomePageState extends State<HomePage> {
   }
 }
 
+/// Um botão da barra de ferramentas: o mesmo dado alimenta o widget e a
+/// estimativa de largura que decide quando os rótulos ainda cabem.
+class _ToolSpec {
+  const _ToolSpec(this.icon, this.label, this.onPressed, {this.tooltip});
+
+  final IconData icon;
+  final String label;
+  final VoidCallback? onPressed;
+  final String? tooltip;
+}
+
+// Medidas da barra: o miolo de um botão com rótulo (padding + ícone + espaço),
+// a largura de um IconButton e as margens do nome do arquivo.
+const double _toolLabelSize = 12.5;
+const double _toolButtonChrome = 46;
+const double _toolIconButtonWidth = 40;
+const double _fileNameMargin = 24;
+const double _fileNameMinWidth = 80;
+const double _fileNameMaxWidth = 260;
+
+/// Limite superior da largura do bloco de botões com rótulo. É medido a partir
+/// dos rótulos reais (e da escala de texto do sistema) em vez de fixado em uma
+/// constante: era um número chutado que deixava "Exportar" fora da janela.
+double _labelledClusterWidth(
+  BuildContext context,
+  List<_ToolSpec> specs, {
+  required bool withInspector,
+}) {
+  final style = Theme.of(context).textTheme.labelLarge?.copyWith(fontSize: _toolLabelSize) ??
+      const TextStyle(fontSize: _toolLabelSize);
+  final scaler = MediaQuery.textScalerOf(context);
+  var width = withInspector ? _toolIconButtonWidth : 0.0;
+  for (final spec in specs) {
+    final painter = TextPainter(
+      text: TextSpan(text: spec.label, style: style),
+      textDirection: Directionality.of(context),
+      textScaler: scaler,
+    )..layout();
+    width += painter.width + _toolButtonChrome;
+  }
+  return width;
+}
+
 class _Toolbar extends StatelessWidget {
   const _Toolbar({
     required this.controller,
@@ -303,6 +348,29 @@ class _Toolbar extends StatelessWidget {
   Widget build(BuildContext context) {
     final hasDocument = controller.hasDocument;
     final colors = GridColors.of(context);
+    final buttons = <_ToolSpec>[
+      _ToolSpec(Icons.folder_open, 'Abrir', onOpen),
+      _ToolSpec(Icons.refresh, 'Recarregar', hasDocument ? onReload : null),
+      _ToolSpec(
+        Icons.filter_alt,
+        'Filtro',
+        hasDocument ? onAddFilter : null,
+        tooltip: 'Adicionar filtro (⌘L)',
+      ),
+      _ToolSpec(Icons.view_column, 'Colunas', hasDocument ? onColumns : null),
+      _ToolSpec(
+        Icons.tune,
+        'Leitura',
+        hasDocument ? onOptions : null,
+        tooltip: 'Delimitador, codificação e cabeçalho',
+      ),
+      _ToolSpec(
+        Icons.ios_share,
+        'Exportar',
+        hasDocument ? onExport : null,
+        tooltip: 'Salvar a visão atual (filtrada e ordenada) como CSV',
+      ),
+    ];
 
     return Container(
       height: 46,
@@ -313,91 +381,64 @@ class _Toolbar extends StatelessWidget {
       ),
       child: LayoutBuilder(
         builder: (context, constraints) {
-          // Narrow windows drop the button labels and the file name before
-          // anything is allowed to overflow.
-          final compact = constraints.maxWidth < 940;
           final searchWidth = constraints.maxWidth < 620 ? 150.0 : 240.0;
+          // Os botões têm prioridade sobre o nome do arquivo: ele fica só com a
+          // sobra, e os rótulos viram ícones antes de qualquer corte.
+          final free = constraints.maxWidth - searchWidth;
+          final labelled =
+              _labelledClusterWidth(context, buttons, withInspector: hasDocument);
+          final compact = free < labelled;
+          final nameWidth = hasDocument && !compact
+              ? math.min(_fileNameMaxWidth, free - labelled - _fileNameMargin)
+              : 0.0;
+
           return Row(
             children: [
-              // The button cluster scrolls rather than overflowing when the
-              // window (or the system font) is bigger than expected.
-              Flexible(
-                flex: 3,
+              // Fica com tudo que o nome do arquivo e a busca não usam; só rola
+              // em janelas estreitas demais até para os ícones.
+              Expanded(
                 child: SingleChildScrollView(
                   scrollDirection: Axis.horizontal,
-                  child: Row(mainAxisSize: MainAxisSize.min, children: [
-              _ToolButton(
-                icon: Icons.folder_open,
-                label: 'Abrir',
-                compact: compact,
-                onPressed: onOpen,
-              ),
-              _ToolButton(
-                icon: Icons.refresh,
-                label: 'Recarregar',
-                compact: compact,
-                onPressed: hasDocument ? onReload : null,
-              ),
-              _ToolButton(
-                icon: Icons.filter_alt,
-                label: 'Filtro',
-                tooltip: 'Adicionar filtro (⌘L)',
-                compact: compact,
-                onPressed: hasDocument ? onAddFilter : null,
-              ),
-              _ToolButton(
-                icon: Icons.view_column,
-                label: 'Colunas',
-                compact: compact,
-                onPressed: hasDocument ? onColumns : null,
-              ),
-              _ToolButton(
-                icon: Icons.tune,
-                label: 'Leitura',
-                tooltip: 'Delimitador, codificação e cabeçalho',
-                compact: compact,
-                onPressed: hasDocument ? onOptions : null,
-              ),
-              _ToolButton(
-                icon: Icons.ios_share,
-                label: 'Exportar',
-                tooltip: 'Salvar a visão atual (filtrada e ordenada) como CSV',
-                compact: compact,
-                onPressed: hasDocument ? onExport : null,
-              ),
-              if (hasDocument)
-                IconButton(
-                  iconSize: 18,
-                  tooltip: 'Painel do registro (⌘I)',
-                  isSelected: controller.showInspector,
-                  onPressed: controller.toggleInspector,
-                  icon: const Icon(Icons.vertical_split_outlined),
-                ),
-                  ]),
-                ),
-              ),
-              if (hasDocument && !compact)
-                Flexible(
-                  flex: 2,
-                  child: Align(
-                    alignment: Alignment.centerRight,
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 12),
-                      child: Tooltip(
-                        message: controller.filePath ?? controller.fileName,
-                        child: Text(
-                          controller.fileName,
-                          maxLines: 1,
-                          textAlign: TextAlign.right,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      for (final spec in buttons)
+                        _ToolButton(
+                          icon: spec.icon,
+                          label: spec.label,
+                          tooltip: spec.tooltip,
+                          compact: compact,
+                          onPressed: spec.onPressed,
                         ),
+                      if (hasDocument)
+                        IconButton(
+                          iconSize: 18,
+                          tooltip: 'Painel do registro (⌘I)',
+                          isSelected: controller.showInspector,
+                          onPressed: controller.toggleInspector,
+                          icon: const Icon(Icons.vertical_split_outlined),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+              if (nameWidth >= _fileNameMinWidth)
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: _fileNameMargin / 2),
+                  child: SizedBox(
+                    width: nameWidth,
+                    child: Tooltip(
+                      message: controller.filePath ?? controller.fileName,
+                      child: Text(
+                        controller.fileName,
+                        maxLines: 1,
+                        textAlign: TextAlign.right,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600),
                       ),
                     ),
                   ),
-                )
-              else
-                const Spacer(),
+                ),
               SizedBox(
                 width: searchWidth,
                 child: TextField(
