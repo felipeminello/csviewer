@@ -1,4 +1,4 @@
-package com.example.csviewer
+package br.dev.minello.csviewer
 
 import io.flutter.embedding.android.FlutterActivity
 
