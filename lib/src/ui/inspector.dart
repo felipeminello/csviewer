@@ -13,8 +13,8 @@ class RecordInspector extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final table = controller.table!;
-    final sourceRow = controller.selectedSourceRow;
+    final columns = controller.columns;
+    final selected = controller.selectedRow;
     final colors = GridColors.of(context);
     final onSurface = Theme.of(context).colorScheme.onSurface;
 
@@ -38,9 +38,10 @@ class RecordInspector extends StatelessWidget {
               children: [
                 Expanded(
                   child: Text(
-                    sourceRow == null
+                    selected == null
                         ? 'Registro'
-                        : 'Registro ${(controller.selectedViewIndex ?? 0) + 1} · linha ${sourceRow + 1}',
+                        : 'Registro ${(controller.selectedViewIndex ?? 0) + 1} '
+                            '· linha ${selected.sourceRow + 1}',
                     style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600),
                   ),
                 ),
@@ -56,12 +57,14 @@ class RecordInspector extends StatelessWidget {
             ),
           ),
           Expanded(
-            child: sourceRow == null
+            child: selected == null
                 ? Center(
                     child: Padding(
                       padding: const EdgeInsets.all(24),
                       child: Text(
-                        'Selecione uma linha para ver todos os campos.',
+                        controller.selectedViewIndex == null
+                            ? 'Selecione uma linha para ver todos os campos.'
+                            : 'Lendo o registro…',
                         textAlign: TextAlign.center,
                         style: TextStyle(color: onSurface.withValues(alpha: 0.5)),
                       ),
@@ -69,17 +72,17 @@ class RecordInspector extends StatelessWidget {
                   )
                 : ListView.separated(
                     padding: const EdgeInsets.symmetric(vertical: 4),
-                    itemCount: table.columnCount,
+                    itemCount: columns.length,
                     separatorBuilder: (_, _) => Divider(height: 1, color: colors.gridLine),
                     itemBuilder: (context, index) {
-                      final value = table.cell(sourceRow, index);
+                      final value = selected.cell(index);
                       return Padding(
                         padding: const EdgeInsets.fromLTRB(12, 6, 6, 6),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              table.columns[index].name,
+                              columns[index].name,
                               style: TextStyle(
                                 fontSize: 11,
                                 fontWeight: FontWeight.w600,

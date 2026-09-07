@@ -11,8 +11,8 @@ class CsvTable {
     required this.filePath,
     required this.fileSizeBytes,
     required this.hasHeaderRow,
-    this.warnings = const <String>[],
-  });
+    List<String>? warnings,
+  }) : warnings = List<String>.of(warnings ?? const <String>[]);
 
   final List<ColumnMeta> columns;
   final List<List<String>> rows;
@@ -75,4 +75,29 @@ int compareValues(String a, String b, ColumnMeta meta) {
       break;
   }
   return a.toLowerCase().compareTo(b.toLowerCase());
+}
+
+/// Key used to order a row by [column]: a double for numbers and dates, a
+/// case-folded string for text, and null for blanks (which sort last).
+Object? sortKeyOf(List<String> row, int column, ColumnMeta meta) {
+  final raw = column < row.length ? row[column] : '';
+  if (raw.trim().isEmpty) return null;
+  switch (meta.type) {
+    case ColumnType.number:
+      return meta.number(raw);
+    case ColumnType.date:
+      return meta.date(raw)?.millisecondsSinceEpoch.toDouble();
+    case ColumnType.text:
+      return raw.toLowerCase();
+  }
+}
+
+int compareSortKeys(Object? a, Object? b) {
+  if (a == null || b == null) {
+    if (a == null && b == null) return 0;
+    return a == null ? 1 : -1;
+  }
+  if (a is double && b is double) return a.compareTo(b);
+  if (a is String && b is String) return a.compareTo(b);
+  return a.toString().compareTo(b.toString());
 }

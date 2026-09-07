@@ -15,7 +15,7 @@ class FilterBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final filters = controller.filters;
-    final columns = controller.table!.columns;
+    final columns = controller.columns;
     final onSurface = Theme.of(context).colorScheme.onSurface;
 
     return Container(

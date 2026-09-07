@@ -73,21 +73,18 @@ class HomePageState extends State<HomePage> {
 
   Future<void> exportView() async {
     if (!controller.hasDocument) return;
-    final table = controller.table!;
-    final suggestion = table.fileName.replaceAll(RegExp(r'\.[^.]*$'), '');
+    final suggestion = controller.fileName.replaceAll(RegExp(r'\.[^.]*$'), '');
     final location = await fs.getSaveLocation(
       suggestedName: '$suggestion-filtrado.csv',
       acceptedTypeGroups: const <fs.XTypeGroup>[_csvTypeGroup],
     );
     if (location == null) return;
     try {
-      await controller.writeExport(location.path);
+      final rows = await controller.export(location.path);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(
-            '${controller.visibleRowCount} registros exportados para ${location.path.split('/').last}',
-          ),
+          content: Text('$rows registros exportados para ${location.path.split('/').last}'),
         ),
       );
     } catch (e) {
@@ -105,10 +102,9 @@ class HomePageState extends State<HomePage> {
   }
 
   void copySelectedRow() {
-    final table = controller.table;
-    final row = controller.selectedSourceRow;
-    if (table == null || row == null) return;
-    final text = controller.visibleColumns.map((c) => table.cell(row, c)).join('\t');
+    final row = controller.selectedRow;
+    if (row == null) return;
+    final text = controller.visibleColumns.map(row.cell).join('\t');
     Clipboard.setData(ClipboardData(text: text));
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Registro copiado'), duration: Duration(seconds: 1)),
@@ -185,6 +181,16 @@ class HomePageState extends State<HomePage> {
     return AnimatedBuilder(
       animation: controller,
       builder: (context, _) {
+        final notice = controller.notice;
+        if (notice != null) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted || controller.notice != notice) return;
+            controller.clearNotice();
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text(notice), duration: const Duration(seconds: 6)),
+            );
+          });
+        }
         return DropTarget(
           onDragEntered: (_) => setState(() => _dragging = true),
           onDragExited: (_) => setState(() => _dragging = false),
@@ -297,7 +303,6 @@ class _Toolbar extends StatelessWidget {
   Widget build(BuildContext context) {
     final hasDocument = controller.hasDocument;
     final colors = GridColors.of(context);
-    final table = controller.table;
 
     return Container(
       height: 46,
@@ -371,7 +376,7 @@ class _Toolbar extends StatelessWidget {
                   ]),
                 ),
               ),
-              if (table != null && !compact)
+              if (hasDocument && !compact)
                 Flexible(
                   flex: 2,
                   child: Align(
@@ -379,9 +384,9 @@ class _Toolbar extends StatelessWidget {
                     child: Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 12),
                       child: Tooltip(
-                        message: table.filePath ?? table.fileName,
+                        message: controller.filePath ?? controller.fileName,
                         child: Text(
-                          table.fileName,
+                          controller.fileName,
                           maxLines: 1,
                           textAlign: TextAlign.right,
                           overflow: TextOverflow.ellipsis,
@@ -519,14 +524,16 @@ class _ReadOptionsDialogState extends State<_ReadOptionsDialog> {
   late String _delimiter;
   late String _encoding;
   late bool _hasHeader;
+  late ReadMode _mode;
 
   @override
   void initState() {
     super.initState();
     final options = widget.controller.options;
-    _delimiter = options.delimiter ?? widget.controller.table!.delimiter;
+    _delimiter = options.delimiter ?? widget.controller.delimiter;
     _encoding = options.encoding;
     _hasHeader = options.hasHeaderRow;
+    _mode = options.mode;
   }
 
   @override
@@ -567,6 +574,21 @@ class _ReadOptionsDialogState extends State<_ReadOptionsDialog> {
               title: const Text('A primeira linha contém os nomes das colunas'),
               onChanged: (value) => setState(() => _hasHeader = value),
             ),
+            const SizedBox(height: 4),
+            DropdownButtonFormField<ReadMode>(
+              initialValue: _mode,
+              isExpanded: true,
+              decoration: const InputDecoration(
+                labelText: 'Leitura',
+                helperText: 'Arquivos grandes são lidos do disco sob demanda.',
+              ),
+              items: const [
+                DropdownMenuItem(value: ReadMode.auto, child: Text('Automático')),
+                DropdownMenuItem(value: ReadMode.memory, child: Text('Carregar na memória')),
+                DropdownMenuItem(value: ReadMode.streaming, child: Text('Streaming do disco')),
+              ],
+              onChanged: (value) => setState(() => _mode = value ?? ReadMode.auto),
+            ),
           ],
         ),
       ),
@@ -574,7 +596,12 @@ class _ReadOptionsDialogState extends State<_ReadOptionsDialog> {
         TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancelar')),
         FilledButton(
           onPressed: () => Navigator.of(context).pop(
-            LoadOptions(delimiter: _delimiter, encoding: _encoding, hasHeaderRow: _hasHeader),
+            LoadOptions(
+              delimiter: _delimiter,
+              encoding: _encoding,
+              hasHeaderRow: _hasHeader,
+              mode: _mode,
+            ),
           ),
           child: const Text('Aplicar'),
         ),

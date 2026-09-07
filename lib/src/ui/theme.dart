@@ -109,3 +109,6 @@ class GridColors {
 const double kRowHeight = 26;
 const double kHeaderHeight = 30;
 const double kRowNumberWidth = 62;
+
+/// How far the left/right arrow keys scroll the grid sideways.
+const double kColumnScrollStep = 120;

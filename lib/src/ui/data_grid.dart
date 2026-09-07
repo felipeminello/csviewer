@@ -1,8 +1,10 @@
 import 'dart:math' as math;
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../data/csv_source.dart';
 import '../model/column_meta.dart';
 import '../state/app_controller.dart';
 import 'theme.dart';
@@ -83,6 +85,12 @@ class _DataGridState extends State<DataGrid> {
       case LogicalKeyboardKey.pageUp:
         _moveSelection(-rowsPerPage);
         return KeyEventResult.handled;
+      case LogicalKeyboardKey.arrowLeft:
+        _scrollHorizontally(-kColumnScrollStep);
+        return KeyEventResult.handled;
+      case LogicalKeyboardKey.arrowRight:
+        _scrollHorizontally(kColumnScrollStep);
+        return KeyEventResult.handled;
       case LogicalKeyboardKey.home:
         _moveSelection(-1, toEdge: true);
         return KeyEventResult.handled;
@@ -93,16 +101,70 @@ class _DataGridState extends State<DataGrid> {
     return KeyEventResult.ignored;
   }
 
+  void _scrollHorizontally(double delta) {
+    if (!_horizontal.hasClients) return;
+    final position = _horizontal.position;
+    _horizontal.jumpTo(
+      (position.pixels + delta).clamp(position.minScrollExtent, position.maxScrollExtent),
+    );
+  }
+
+  /// Wheel and trackpad. Only one scrollable wins a pointer signal, and the
+  /// innermost one registers first — that is the vertical list, which reads
+  /// just the vertical axis of the gesture and drops the rest, so a sideways
+  /// trackpad swipe never reached the grid. The listeners below sit under the
+  /// list (on the rows themselves), so they claim the event first and hand
+  /// each axis to its own controller.
+  void _onPointerSignal(PointerSignalEvent event) {
+    if (event is! PointerScrollEvent) return;
+    final (dx, dy) = _pointerScrollDelta(event);
+    if (!_canScroll(_horizontal, dx) && !_canScroll(_vertical, dy)) return;
+    GestureBinding.instance.pointerSignalResolver.register(event, _applyPointerScroll);
+  }
+
+  void _applyPointerScroll(PointerEvent event) {
+    final (dx, dy) = _pointerScrollDelta(event as PointerScrollEvent);
+    if (_canScroll(_horizontal, dx)) _horizontal.position.pointerScroll(dx);
+    if (_canScroll(_vertical, dy)) _vertical.position.pointerScroll(dy);
+    event.respond(allowPlatformDefault: false);
+  }
+
+  (double, double) _pointerScrollDelta(PointerScrollEvent event) {
+    var dx = event.scrollDelta.dx;
+    var dy = event.scrollDelta.dy;
+    if (HardwareKeyboard.instance.isShiftPressed) {
+      // Shift + wheel scrolls sideways. macOS already swaps the axes for us;
+      // on Windows and Linux the delta still arrives on the vertical one.
+      if (dx == 0) dx = dy;
+      dy = 0;
+    }
+    return (dx, dy);
+  }
+
+  bool _canScroll(ScrollController controller, double delta) {
+    if (delta == 0 || !controller.hasClients) return false;
+    final position = controller.position;
+    return delta < 0
+        ? position.pixels > position.minScrollExtent
+        : position.pixels < position.maxScrollExtent;
+  }
+
   /// Widens a column to fit the longest value currently in view.
   void _autoFit(int column) {
-    final table = controller.table!;
     final style = DefaultTextStyle.of(context).style.copyWith(fontSize: 12.5);
     final painter = TextPainter(textDirection: TextDirection.ltr);
-    double widest = _measure(painter, table.columns[column].name, style.copyWith(fontWeight: FontWeight.w600));
-    final rows = controller.viewRows;
-    final sample = math.min(rows.length, 800);
+    double widest = _measure(
+      painter,
+      controller.columns[column].name,
+      style.copyWith(fontWeight: FontWeight.w600),
+    );
+    // Only rows already read are measured — on a huge file that is the window
+    // around the viewport, which is exactly what the user is looking at.
+    final sample = math.min(controller.visibleRowCount, 800);
     for (var i = 0; i < sample; i++) {
-      final width = _measure(painter, table.cell(rows[i], column), style);
+      final row = controller.rowIfReady(i);
+      if (row == null) continue;
+      final width = _measure(painter, row.cell(column), style);
       if (width > widest) widest = width;
     }
     controller.setColumnWidth(column, widest + 40);
@@ -117,11 +179,15 @@ class _DataGridState extends State<DataGrid> {
 
   @override
   Widget build(BuildContext context) {
-    final table = controller.table!;
     final columns = controller.visibleColumns;
     final colors = GridColors.of(context);
-    final totalWidth = kRowNumberWidth +
-        columns.fold<double>(0, (sum, c) => sum + controller.columnWidth(c));
+    // Row numbers reach eight digits on a 25-million-record file.
+    final numberWidth = math.max(
+      kRowNumberWidth,
+      26 + '${controller.visibleRowCount}'.length * 7.5,
+    );
+    final totalWidth =
+        numberWidth + columns.fold<double>(0, (sum, c) => sum + controller.columnWidth(c));
 
     return Focus(
       focusNode: _focusNode,
@@ -133,48 +199,56 @@ class _DataGridState extends State<DataGrid> {
           final width = math.max(totalWidth, constraints.maxWidth);
           return Scrollbar(
             controller: _vertical,
-            notificationPredicate: (_) => true,
+            // The list scrolls inside the horizontal viewport, so notifications
+            // arrive nested; each bar listens to its own axis only.
+            notificationPredicate: (n) => n.metrics.axis == Axis.vertical,
             child: Scrollbar(
               controller: _horizontal,
-              notificationPredicate: (_) => true,
+              notificationPredicate: (n) => n.metrics.axis == Axis.horizontal,
               child: SingleChildScrollView(
                 controller: _horizontal,
                 scrollDirection: Axis.horizontal,
-                child: SizedBox(
-                  width: width,
-                  height: constraints.maxHeight,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      _HeaderRow(
-                        controller: controller,
-                        columns: columns,
-                        colors: colors,
-                        filler: width - totalWidth,
-                        onFilterColumn: widget.onFilterColumn,
-                        onAutoFit: _autoFit,
-                      ),
-                      Expanded(
-                        child: controller.viewRows.isEmpty
-                            ? _EmptyResult(controller: controller)
-                            : MouseRegion(
-                                onExit: (_) => setState(() => _hoveredRow = null),
-                                child: ListView.builder(
-                                  controller: _vertical,
-                                  itemExtent: kRowHeight,
-                                  itemCount: controller.viewRows.length,
-                                  itemBuilder: (context, index) => _buildRow(
-                                    context,
-                                    index,
-                                    table.rows,
-                                    columns,
-                                    colors,
-                                    width - totalWidth,
+                // Covers the header and the empty state, where no row listener
+                // is in the hit-test path.
+                child: Listener(
+                  onPointerSignal: _onPointerSignal,
+                  child: SizedBox(
+                    width: width,
+                    height: constraints.maxHeight,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        _HeaderRow(
+                          controller: controller,
+                          columns: columns,
+                          colors: colors,
+                          numberWidth: numberWidth,
+                          filler: width - totalWidth,
+                          onFilterColumn: widget.onFilterColumn,
+                          onAutoFit: _autoFit,
+                        ),
+                        Expanded(
+                          child: controller.visibleRowCount == 0
+                              ? _EmptyResult(controller: controller)
+                              : MouseRegion(
+                                  onExit: (_) => setState(() => _hoveredRow = null),
+                                  child: ListView.builder(
+                                    controller: _vertical,
+                                    itemExtent: kRowHeight,
+                                    itemCount: controller.visibleRowCount,
+                                    itemBuilder: (context, index) => _buildRow(
+                                      context,
+                                      index,
+                                      columns,
+                                      colors,
+                                      numberWidth,
+                                      width - totalWidth,
+                                    ),
                                   ),
                                 ),
-                              ),
-                      ),
-                    ],
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),
@@ -188,14 +262,15 @@ class _DataGridState extends State<DataGrid> {
   Widget _buildRow(
     BuildContext context,
     int viewIndex,
-    List<List<String>> rows,
     List<int> columns,
     GridColors colors,
+    double numberWidth,
     double filler,
   ) {
-    final table = controller.table!;
-    final rowIndex = controller.viewRows[viewIndex];
-    final row = rows[rowIndex];
+    // Asking as the row is painted is what drives reading from a large file:
+    // only the records on screen (plus their window) are ever decoded.
+    controller.ensureRange(viewIndex, viewIndex);
+    final LoadedRow? row = controller.rowIfReady(viewIndex);
     final selected = controller.selectedViewIndex == viewIndex;
     final hovered = _hoveredRow == viewIndex;
     final Color background = selected
@@ -204,31 +279,44 @@ class _DataGridState extends State<DataGrid> {
             ? colors.hover
             : (viewIndex.isOdd ? colors.stripe : Colors.transparent);
 
-    return MouseRegion(
-      onEnter: (_) => setState(() => _hoveredRow = viewIndex),
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: () {
-          _focusNode.requestFocus();
-          controller.selectViewRow(viewIndex);
-        },
-        child: Container(
-          color: background,
-          child: Row(
-            children: [
-              _RowNumber(number: viewIndex + 1, sourceLine: rowIndex + 1, colors: colors),
-              for (final c in columns)
-                _Cell(
-                  text: c < row.length ? row[c] : '',
-                  width: controller.columnWidth(c),
-                  numeric: table.columns[c].isNumeric,
-                  highlight: controller.quickSearch,
+    return Listener(
+      // Sits below the vertical list, so this is what claims the pointer
+      // signal and both axes of the gesture survive.
+      onPointerSignal: _onPointerSignal,
+      child: MouseRegion(
+        onEnter: (_) => setState(() => _hoveredRow = viewIndex),
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: () {
+            _focusNode.requestFocus();
+            controller.selectViewRow(viewIndex);
+          },
+          child: Container(
+            color: background,
+            child: Row(
+              children: [
+                _RowNumber(
+                  number: viewIndex + 1,
+                  sourceLine: row == null ? null : row.sourceRow + 1,
+                  width: numberWidth,
                   colors: colors,
                 ),
-              // Keeps stripes and the selection highlight running to the edge
-              // when the columns do not fill the window.
-              if (filler > 0) SizedBox(width: filler),
-            ],
+                for (final c in columns)
+                  if (row == null)
+                    _PendingCell(width: controller.columnWidth(c), colors: colors)
+                  else
+                    _Cell(
+                      text: row.cell(c),
+                      width: controller.columnWidth(c),
+                      numeric: controller.columns[c].isNumeric,
+                      highlight: controller.quickSearch,
+                      colors: colors,
+                    ),
+                // Keeps stripes and the selection highlight running to the edge
+                // when the columns do not fill the window.
+                if (filler > 0) SizedBox(width: filler),
+              ],
+            ),
           ),
         ),
       ),
@@ -237,19 +325,25 @@ class _DataGridState extends State<DataGrid> {
 }
 
 class _RowNumber extends StatelessWidget {
-  const _RowNumber({required this.number, required this.sourceLine, required this.colors});
+  const _RowNumber({
+    required this.number,
+    required this.sourceLine,
+    required this.width,
+    required this.colors,
+  });
 
   final int number;
-  final int sourceLine;
+  final int? sourceLine;
+  final double width;
   final GridColors colors;
 
   @override
   Widget build(BuildContext context) {
     return Tooltip(
-      message: 'Linha $sourceLine do arquivo',
+      message: sourceLine == null ? 'Lendo…' : 'Linha $sourceLine do arquivo',
       waitDuration: const Duration(milliseconds: 900),
       child: Container(
-        width: kRowNumberWidth,
+        width: width,
         height: kRowHeight,
         alignment: Alignment.centerRight,
         padding: const EdgeInsets.only(right: 10),
@@ -262,6 +356,37 @@ class _RowNumber extends StatelessWidget {
             fontSize: 11.5,
             color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.45),
             fontFeatures: const [FontFeature.tabularFigures()],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _PendingCell extends StatelessWidget {
+  const _PendingCell({required this.width, required this.colors});
+
+  final double width;
+  final GridColors colors;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: width,
+      height: kRowHeight,
+      alignment: Alignment.centerLeft,
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      decoration: BoxDecoration(
+        border: Border(right: BorderSide(color: colors.gridLine)),
+      ),
+      child: FractionallySizedBox(
+        widthFactor: 0.6,
+        alignment: Alignment.centerLeft,
+        child: Container(
+          height: 8,
+          decoration: BoxDecoration(
+            color: colors.gridLine,
+            borderRadius: BorderRadius.circular(4),
           ),
         ),
       ),
@@ -346,6 +471,7 @@ class _HeaderRow extends StatelessWidget {
     required this.controller,
     required this.columns,
     required this.colors,
+    required this.numberWidth,
     required this.filler,
     required this.onFilterColumn,
     required this.onAutoFit,
@@ -354,6 +480,7 @@ class _HeaderRow extends StatelessWidget {
   final AppController controller;
   final List<int> columns;
   final GridColors colors;
+  final double numberWidth;
   final double filler;
   final ColumnFilterRequest onFilterColumn;
   final void Function(int column) onAutoFit;
@@ -369,7 +496,7 @@ class _HeaderRow extends StatelessWidget {
       child: Row(
         children: [
           Container(
-            width: kRowNumberWidth,
+            width: numberWidth,
             height: kHeaderHeight,
             alignment: Alignment.centerRight,
             padding: const EdgeInsets.only(right: 10),
@@ -408,7 +535,7 @@ class _HeaderCell extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final meta = controller.table!.columns[column];
+    final meta = controller.columns[column];
     final sort = controller.sortFor(column);
     final priority = controller.sortPriority(column);
     final width = controller.columnWidth(column);
@@ -583,7 +710,9 @@ class _EmptyResult extends StatelessWidget {
           const SizedBox(height: 8),
           Text(
             controller.totalRows == 0
-                ? 'O arquivo não tem registros.'
+                ? (controller.indexing
+                    ? 'Lendo o arquivo…'
+                    : 'O arquivo não tem registros.')
                 : 'Nenhum registro corresponde aos filtros.',
             style: TextStyle(color: onSurface.withValues(alpha: 0.6)),
           ),

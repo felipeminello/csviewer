@@ -17,11 +17,11 @@ class _ColumnsDialogState extends State<ColumnsDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final table = widget.controller.table!;
+    final columns = widget.controller.columns;
     final needle = _search.toLowerCase();
     final indices = <int>[
-      for (var i = 0; i < table.columnCount; i++)
-        if (needle.isEmpty || table.columns[i].name.toLowerCase().contains(needle)) i,
+      for (var i = 0; i < columns.length; i++)
+        if (needle.isEmpty || columns[i].name.toLowerCase().contains(needle)) i,
     ];
 
     return AlertDialog(
@@ -52,7 +52,7 @@ class _ColumnsDialogState extends State<ColumnsDialog> {
                     contentPadding: EdgeInsets.zero,
                     value: widget.controller.isColumnVisible(index),
                     title: Text(
-                      table.columns[index].name,
+                      columns[index].name,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(fontSize: 12.5),

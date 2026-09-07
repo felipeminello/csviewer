@@ -14,152 +14,178 @@ Diego,Curitiba,28,150.00,2024-03-01
 Elisa,Recife,52,,2022-07-19
 ''';
 
+/// Values of one column, in the order the grid would show them.
+Future<List<String>> _column(AppController controller, int column) async {
+  await controller.settle();
+  final values = <String>[];
+  for (var i = 0; i < controller.visibleRowCount; i++) {
+    values.add((await controller.rowAt(i))!.cell(column));
+  }
+  return values;
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  late Directory dir;
-  late String path;
-  late AppController controller;
+  // Every behaviour is verified twice: with the file held in memory, and with
+  // the streaming reader that only touches the blocks it needs.
+  for (final mode in <ReadMode>[ReadMode.memory, ReadMode.streaming]) {
+    group('modo ${mode.name}', () {
+      late Directory dir;
+      late String path;
+      late AppController controller;
 
-  setUp(() async {
-    dir = await Directory.systemTemp.createTemp('csviewer_test');
-    path = '${dir.path}/sample.csv';
-    await File(path).writeAsString(_sample);
-    controller = AppController();
-    await controller.openPath(path);
-  });
+      setUp(() async {
+        dir = await Directory.systemTemp.createTemp('csviewer_test');
+        path = '${dir.path}/sample.csv';
+        await File(path).writeAsString(_sample);
+        controller = AppController();
+        await controller.openPath(path, options: LoadOptions(mode: mode));
+        await controller.settle();
+      });
 
-  tearDown(() async {
-    controller.dispose();
-    await dir.delete(recursive: true);
-  });
+      tearDown(() async {
+        controller.dispose();
+        await dir.delete(recursive: true);
+      });
 
-  test('carrega cabeçalho, registros e tipos', () {
-    final table = controller.table!;
-    expect(table.columnCount, 5);
-    expect(table.rowCount, 5);
-    expect(table.columns.map((c) => c.name).toList(),
-        ['nome', 'cidade', 'idade', 'valor', 'data']);
-    expect(controller.visibleRowCount, 5);
-  });
+      test('carrega cabeçalho, registros e tipos', () async {
+        expect(controller.columnCount, 5);
+        expect(controller.totalRows, 5);
+        expect(controller.columns.map((c) => c.name).toList(),
+            ['nome', 'cidade', 'idade', 'valor', 'data']);
+        expect(controller.visibleRowCount, 5);
+        expect(controller.isStreaming, mode == ReadMode.streaming);
+      });
 
-  test('ordena por coluna de texto em ordem crescente e decrescente', () {
-    controller.toggleSort(0);
-    expect(_column(controller, 0), ['Ana', 'Bruno', 'Carla', 'Diego', 'Elisa']);
-    controller.toggleSort(0);
-    expect(_column(controller, 0), ['Elisa', 'Diego', 'Carla', 'Bruno', 'Ana']);
-    controller.toggleSort(0);
-    expect(controller.sorts, isEmpty);
-    expect(_column(controller, 0), ['Ana', 'Bruno', 'Carla', 'Diego', 'Elisa']);
-  });
+      test('ordena por coluna de texto em ordem crescente e decrescente', () async {
+        controller.toggleSort(0);
+        expect(await _column(controller, 0), ['Ana', 'Bruno', 'Carla', 'Diego', 'Elisa']);
+        controller.toggleSort(0);
+        expect(await _column(controller, 0), ['Elisa', 'Diego', 'Carla', 'Bruno', 'Ana']);
+        controller.toggleSort(0);
+        await controller.settle();
+        expect(controller.sorts, isEmpty);
+        expect(await _column(controller, 0), ['Ana', 'Bruno', 'Carla', 'Diego', 'Elisa']);
+      });
 
-  test('ordena números por valor, não como texto', () {
-    controller.setSort(3, true);
-    expect(_column(controller, 3), ['150.00', '980.00', '1200.50', '3300.75', '']);
-  });
+      test('ordena números por valor, não como texto', () async {
+        controller.setSort(3, true);
+        expect(await _column(controller, 3), ['150.00', '980.00', '1200.50', '3300.75', '']);
+      });
 
-  test('ordenação por várias colunas usa a prioridade dos cliques', () {
-    controller.toggleSort(1); // cidade
-    controller.toggleSort(2, additive: true); // idade
-    expect(_column(controller, 0), ['Diego', 'Bruno', 'Elisa', 'Ana', 'Carla']);
-  });
+      test('ordenação por várias colunas usa a prioridade dos cliques', () async {
+        controller.toggleSort(1); // cidade
+        controller.toggleSort(2, additive: true); // idade
+        expect(await _column(controller, 0), ['Diego', 'Bruno', 'Elisa', 'Ana', 'Carla']);
+      });
 
-  test('filtra por valor de coluna', () {
-    controller.addFilter(FilterRule(column: 1, op: FilterOp.equals, value: 'são paulo'));
-    expect(_column(controller, 0), ['Ana', 'Carla']);
-  });
+      test('filtra por valor de coluna', () async {
+        controller.addFilter(FilterRule(column: 1, op: FilterOp.equals, value: 'são paulo'));
+        expect(await _column(controller, 0), ['Ana', 'Carla']);
+      });
 
-  test('concatena filtros com E', () {
-    controller.addFilter(FilterRule(column: 1, op: FilterOp.equals, value: 'Recife'));
-    controller.addFilter(FilterRule(column: 2, op: FilterOp.less, value: '40'));
-    expect(_column(controller, 0), ['Bruno']);
-  });
+      test('concatena filtros com E', () async {
+        controller.addFilter(FilterRule(column: 1, op: FilterOp.equals, value: 'Recife'));
+        controller.addFilter(FilterRule(column: 2, op: FilterOp.less, value: '40'));
+        expect(await _column(controller, 0), ['Bruno']);
+      });
 
-  test('concatena filtros com OU', () {
-    controller.addFilter(FilterRule(column: 1, op: FilterOp.equals, value: 'Curitiba'));
-    controller.addFilter(
-      FilterRule(column: 2, op: FilterOp.greater, value: '50', join: FilterJoin.or),
-    );
-    expect(_column(controller, 0), ['Diego', 'Elisa']);
-  });
+      test('concatena filtros com OU', () async {
+        controller.addFilter(FilterRule(column: 1, op: FilterOp.equals, value: 'Curitiba'));
+        controller.addFilter(
+          FilterRule(column: 2, op: FilterOp.greater, value: '50', join: FilterJoin.or),
+        );
+        expect(await _column(controller, 0), ['Diego', 'Elisa']);
+      });
 
-  test('E tem precedência sobre OU, como em SQL', () {
-    // (cidade = Recife E idade < 40) OU cidade = Curitiba
-    controller.addFilter(FilterRule(column: 1, op: FilterOp.equals, value: 'Recife'));
-    controller.addFilter(FilterRule(column: 2, op: FilterOp.less, value: '40'));
-    controller.addFilter(
-      FilterRule(column: 1, op: FilterOp.equals, value: 'Curitiba', join: FilterJoin.or),
-    );
-    expect(_column(controller, 0), ['Bruno', 'Diego']);
-  });
+      test('E tem precedência sobre OU, como em SQL', () async {
+        // (cidade = Recife E idade < 40) OU cidade = Curitiba
+        controller.addFilter(FilterRule(column: 1, op: FilterOp.equals, value: 'Recife'));
+        controller.addFilter(FilterRule(column: 2, op: FilterOp.less, value: '40'));
+        controller.addFilter(
+          FilterRule(column: 1, op: FilterOp.equals, value: 'Curitiba', join: FilterJoin.or),
+        );
+        expect(await _column(controller, 0), ['Bruno', 'Diego']);
+      });
 
-  test('filtro entre valores usa comparação numérica', () {
-    controller.addFilter(
-      FilterRule(column: 3, op: FilterOp.between, value: '900', value2: '1300'),
-    );
-    expect(_column(controller, 0), ['Ana', 'Bruno']);
-  });
+      test('filtro entre valores usa comparação numérica', () async {
+        controller.addFilter(
+          FilterRule(column: 3, op: FilterOp.between, value: '900', value2: '1300'),
+        );
+        expect(await _column(controller, 0), ['Ana', 'Bruno']);
+      });
 
-  test('filtro por conjunto de valores', () {
-    controller.addFilter(
-      FilterRule(column: 1, op: FilterOp.inSet, values: {'Recife', 'Curitiba'}),
-    );
-    expect(_column(controller, 0), ['Bruno', 'Diego', 'Elisa']);
-  });
+      test('filtro por conjunto de valores', () async {
+        controller.addFilter(
+          FilterRule(column: 1, op: FilterOp.inSet, values: {'Recife', 'Curitiba'}),
+        );
+        expect(await _column(controller, 0), ['Bruno', 'Diego', 'Elisa']);
+      });
 
-  test('filtro por campo vazio', () {
-    controller.addFilter(FilterRule(column: 3, op: FilterOp.isEmpty));
-    expect(_column(controller, 0), ['Elisa']);
-  });
+      test('filtro por campo vazio', () async {
+        controller.addFilter(FilterRule(column: 3, op: FilterOp.isEmpty));
+        expect(await _column(controller, 0), ['Elisa']);
+      });
 
-  test('filtro de data compara cronologicamente', () {
-    controller.addFilter(FilterRule(column: 4, op: FilterOp.greater, value: '2024-02-01'));
-    expect(_column(controller, 0), ['Bruno', 'Diego']);
-  });
+      test('filtro de data compara cronologicamente', () async {
+        controller.addFilter(FilterRule(column: 4, op: FilterOp.greater, value: '2024-02-01'));
+        expect(await _column(controller, 0), ['Bruno', 'Diego']);
+      });
 
-  test('desativar um filtro o mantém na lista sem aplicá-lo', () {
-    controller.addFilter(FilterRule(column: 1, op: FilterOp.equals, value: 'Recife'));
-    controller.toggleFilterEnabled(0);
-    expect(controller.filters.length, 1);
-    expect(controller.visibleRowCount, 5);
-  });
+      test('desativar um filtro o mantém na lista sem aplicá-lo', () async {
+        controller.addFilter(FilterRule(column: 1, op: FilterOp.equals, value: 'Recife'));
+        controller.toggleFilterEnabled(0);
+        await controller.settle();
+        expect(controller.filters.length, 1);
+        expect(controller.visibleRowCount, 5);
+      });
 
-  test('busca rápida atravessa todas as colunas', () {
-    controller.setQuickSearch('curitiba');
-    expect(_column(controller, 0), ['Diego']);
-  });
+      test('busca rápida atravessa todas as colunas', () async {
+        controller.setQuickSearch('curitiba');
+        expect(await _column(controller, 0), ['Diego']);
+      });
 
-  test('filtros e ordenação se combinam', () {
-    controller.addFilter(FilterRule(column: 1, op: FilterOp.notEquals, value: 'Curitiba'));
-    controller.setSort(2, false);
-    expect(_column(controller, 0), ['Elisa', 'Carla', 'Ana', 'Bruno']);
-  });
+      test('filtros e ordenação se combinam', () async {
+        controller.addFilter(FilterRule(column: 1, op: FilterOp.notEquals, value: 'Curitiba'));
+        controller.setSort(2, false);
+        expect(await _column(controller, 0), ['Elisa', 'Carla', 'Ana', 'Bruno']);
+      });
 
-  test('exporta apenas a visão atual', () {
-    controller.addFilter(FilterRule(column: 1, op: FilterOp.equals, value: 'Recife'));
-    controller.setSort(2, false);
-    final csv = controller.exportCsv();
-    expect(csv.trim().split('\n'), [
-      'nome,cidade,idade,valor,data',
-      'Elisa,Recife,52,,2022-07-19',
-      'Bruno,Recife,28,980.00,2024-02-11',
-    ]);
-  });
+      test('valores distintos de uma coluna', () async {
+        expect(await controller.distinctValues(1),
+            ['Curitiba', 'Recife', 'Recife', 'São Paulo']..removeAt(2));
+      });
 
-  test('ocultar coluna a remove da exportação, mas não dos filtros', () {
-    controller.setColumnVisible(4, false);
-    expect(controller.exportCsv().split('\n').first, 'nome,cidade,idade,valor');
-    controller.addFilter(FilterRule(column: 4, op: FilterOp.contains, value: '2024'));
-    expect(controller.visibleRowCount, 3);
-  });
+      test('exporta apenas a visão atual', () async {
+        controller.addFilter(FilterRule(column: 1, op: FilterOp.equals, value: 'Recife'));
+        controller.setSort(2, false);
+        await controller.settle();
+        final out = '${dir.path}/export.csv';
+        final rows = await controller.export(out);
+        expect(rows, 2);
+        expect(File(out).readAsStringSync().trim().split('\n'), [
+          'nome,cidade,idade,valor,data',
+          'Elisa,Recife,52,,2022-07-19',
+          'Bruno,Recife,28,980.00,2024-02-11',
+        ]);
+      });
 
-  test('recarregar com outro delimitador reprocessa o arquivo', () async {
-    await controller.reload(const LoadOptions(delimiter: ';'));
-    expect(controller.table!.columnCount, 1);
-  });
-}
+      test('ocultar coluna a remove da exportação, mas não dos filtros', () async {
+        controller.setColumnVisible(4, false);
+        final out = '${dir.path}/export.csv';
+        await controller.export(out);
+        expect(File(out).readAsStringSync().split('\n').first, 'nome,cidade,idade,valor');
+        controller.addFilter(FilterRule(column: 4, op: FilterOp.contains, value: '2024'));
+        await controller.settle();
+        expect(controller.visibleRowCount, 3);
+      });
 
-List<String> _column(AppController controller, int column) {
-  final table = controller.table!;
-  return controller.viewRows.map((r) => table.cell(r, column)).toList();
+      test('recarregar com outro delimitador reprocessa o arquivo', () async {
+        await controller.reload(LoadOptions(delimiter: ';', mode: mode));
+        await controller.settle();
+        expect(controller.columnCount, 1);
+      });
+    });
+  }
 }

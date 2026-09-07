@@ -2,9 +2,12 @@ import 'dart:io';
 import 'dart:ui' as ui;
 
 import 'package:csviewer/src/model/filter.dart';
+import 'package:csviewer/src/services/csv_loader.dart';
 import 'package:csviewer/src/state/app_controller.dart';
+import 'package:csviewer/src/ui/data_grid.dart';
 import 'package:csviewer/src/ui/home_page.dart';
 import 'package:csviewer/src/ui/theme.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -51,6 +54,7 @@ void main() {
     await File('${dir.path}/pedidos.csv').writeAsString(_sample);
     controller = AppController();
     await controller.openPath('${dir.path}/pedidos.csv');
+    await controller.settle();
   });
 
   tearDown(() async {
@@ -100,13 +104,12 @@ void main() {
     await tester.pumpAndSettle();
     expect(controller.sorts.single.column, 1);
     expect(controller.sorts.single.ascending, isTrue);
-    final table = controller.table!;
-    expect(table.cell(controller.viewRows.first, 1), 'Ana Souza');
+    expect(controller.rowIfReady(0)!.cell(1), 'Ana Souza');
 
     await tester.tap(find.text('cliente'));
     await tester.pumpAndSettle();
     expect(controller.sorts.single.ascending, isFalse);
-    expect(table.cell(controller.viewRows.first, 1), 'João Vidal');
+    expect(controller.rowIfReady(0)!.cell(1), 'João Vidal');
     await capture(tester, '02-ordenado');
   });
 
@@ -140,6 +143,123 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Ana Souza'), findsNWidgets(2)); // grade + painel
     await capture(tester, '05-painel-registro');
+  });
+
+  testWidgets('no modo streaming a grade preenche as linhas conforme lê o disco',
+      (tester) async {
+    final streaming = AppController();
+    addTearDown(streaming.dispose);
+    // Abertura e indexação usam temporizadores reais, fora do relógio falso do
+    // teste de widget.
+    await tester.runAsync(() async {
+      await streaming.openPath('${dir.path}/pedidos.csv',
+          options: const LoadOptions(mode: ReadMode.streaming));
+      await streaming.settle();
+    });
+    expect(streaming.isStreaming, isTrue);
+    expect(streaming.visibleRowCount, 8);
+
+    tester.view.physicalSize = const Size(2400, 1500);
+    tester.view.devicePixelRatio = 2;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(
+      RepaintBoundary(
+        child: MaterialApp(
+          theme: AppTheme.light(fontFamily: 'Roboto'),
+          home: HomePage(controller: streaming),
+        ),
+      ),
+    );
+    // Primeiro quadro: os registros ainda estão sendo lidos do disco.
+    await tester.pump();
+    expect(find.text('PED-00001'), findsNothing);
+
+    // A janela chega do isolate e a grade se preenche.
+    await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 400)));
+    await tester.pumpAndSettle();
+    expect(find.text('PED-00001'), findsOneWidget);
+    expect(find.text('Gabriela Melo'), findsOneWidget);
+    expect(find.textContaining('8 registros'), findsOneWidget);
+    await capture(tester, '07-streaming');
+  });
+
+  testWidgets('roda e trackpad rolam a grade na horizontal', (tester) async {
+    // Linhas suficientes para a lista vertical também ter para onde rolar: é
+    // com os dois eixos disputando o evento que o gesto horizontal se perdia.
+    final buffer = StringBuffer(_sample.split('\n').first)..writeln();
+    for (var i = 0; i < 400; i++) {
+      buffer.writeln('PED-${(i + 1).toString().padLeft(5, '0')};Cliente $i;Recife;Livros;'
+          '3;89,90;02/03/2023;Pago');
+    }
+    final wide = AppController();
+    addTearDown(wide.dispose);
+    // I/O real precisa do relógio real, fora do tempo falso do teste.
+    await tester.runAsync(() async {
+      await File('${dir.path}/muitos.csv').writeAsString(buffer.toString());
+      await wide.openPath('${dir.path}/muitos.csv');
+      await wide.settle();
+    });
+
+    tester.view.physicalSize = const Size(2400, 1500);
+    tester.view.devicePixelRatio = 2;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(
+      RepaintBoundary(
+        child: MaterialApp(
+          theme: AppTheme.light(fontFamily: 'Roboto'),
+          home: HomePage(controller: wide),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // Colunas largas o bastante para a grade transbordar a janela.
+    for (var c = 0; c < wide.columns.length; c++) {
+      wide.setColumnWidth(c, 320);
+    }
+    await tester.pumpAndSettle();
+
+    final ScrollController horizontal = tester
+        .widget<SingleChildScrollView>(
+          find.descendant(
+            of: find.byType(DataGrid),
+            matching: find.byType(SingleChildScrollView),
+          ),
+        )
+        .controller!;
+    final ScrollController vertical = tester
+        .widget<ListView>(find.descendant(
+          of: find.byType(DataGrid),
+          matching: find.byType(ListView),
+        ))
+        .controller!;
+    expect(horizontal.position.maxScrollExtent, greaterThan(0));
+    expect(vertical.position.maxScrollExtent, greaterThan(0));
+
+    final pointer = TestPointer(1, PointerDeviceKind.mouse);
+    await tester.sendEventToBinding(pointer.hover(tester.getCenter(find.byType(DataGrid))));
+    // Gesto diagonal do trackpad: a lista vertical engolia o evento inteiro e
+    // o componente horizontal se perdia.
+    await tester.sendEventToBinding(pointer.scroll(const Offset(150, 60)));
+    await tester.pump();
+    expect(horizontal.offset, 150);
+    expect(vertical.offset, 60);
+
+    // Shift + roda: no Windows e no Linux só o eixo vertical chega no evento.
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.shift);
+    await tester.sendEventToBinding(pointer.scroll(const Offset(0, 90)));
+    await tester.pump();
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.shift);
+    expect(horizontal.offset, 240);
+    expect(vertical.offset, 60);
+
+    // As setas do teclado percorrem as colunas.
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+    await tester.pump();
+    expect(horizontal.offset, 240 + kColumnScrollStep);
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
+    await tester.pump();
+    expect(horizontal.offset, 240);
   });
 
   testWidgets('busca rápida filtra e destaca', (tester) async {

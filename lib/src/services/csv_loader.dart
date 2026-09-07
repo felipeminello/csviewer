@@ -5,28 +5,39 @@ import 'package:flutter/foundation.dart';
 import '../model/csv_table.dart';
 import 'csv_parser.dart';
 
+/// How a file is read: everything in memory, or indexed and read on demand.
+enum ReadMode { auto, memory, streaming }
+
+/// Files bigger than this are read from disk on demand instead of being held
+/// in memory.
+const int kStreamingThresholdBytes = 128 * 1024 * 1024;
+
 class LoadOptions {
   const LoadOptions({
     this.delimiter,
     this.encoding = encodingAuto,
     this.hasHeaderRow = true,
+    this.mode = ReadMode.auto,
   });
 
   /// Null means "detect from the file".
   final String? delimiter;
   final String encoding;
   final bool hasHeaderRow;
+  final ReadMode mode;
 
   LoadOptions copyWith({
     String? delimiter,
     bool clearDelimiter = false,
     String? encoding,
     bool? hasHeaderRow,
+    ReadMode? mode,
   }) {
     return LoadOptions(
       delimiter: clearDelimiter ? null : (delimiter ?? this.delimiter),
       encoding: encoding ?? this.encoding,
       hasHeaderRow: hasHeaderRow ?? this.hasHeaderRow,
+      mode: mode ?? this.mode,
     );
   }
 }
@@ -84,23 +95,7 @@ CsvTable _load(_LoadRequest request) {
   for (final row in rows) {
     if (row.length > widest) widest = row.length;
   }
-  for (var i = names.length; i < widest; i++) {
-    names.add(request.options.hasHeaderRow ? 'Coluna ${i + 1}' : 'Coluna ${i + 1}');
-  }
-  // Empty or duplicated headers make columns impossible to tell apart.
-  final used = <String, int>{};
-  for (var i = 0; i < names.length; i++) {
-    var name = names[i].trim();
-    if (name.isEmpty) name = 'Coluna ${i + 1}';
-    final seen = used[name.toLowerCase()];
-    if (seen != null) {
-      used[name.toLowerCase()] = seen + 1;
-      name = '$name (${seen + 1})';
-    } else {
-      used[name.toLowerCase()] = 1;
-    }
-    names[i] = name;
-  }
+  names = normaliseHeaders(names, widest);
 
   var ragged = 0;
   for (final row in rows) {

@@ -224,3 +224,26 @@ List<ColumnMeta> inferColumns(List<String> names, List<List<String>> rows, {int 
   }
   return metas;
 }
+
+/// Fills in missing headers and disambiguates duplicates, so every column can
+/// be told apart in the UI and in filters.
+List<String> normaliseHeaders(List<String> names, int columnCount) {
+  final result = List<String>.from(names);
+  for (var i = result.length; i < columnCount; i++) {
+    result.add('Coluna ${i + 1}');
+  }
+  final used = <String, int>{};
+  for (var i = 0; i < result.length; i++) {
+    var name = result[i].trim();
+    if (name.isEmpty) name = 'Coluna ${i + 1}';
+    final seen = used[name.toLowerCase()];
+    if (seen != null) {
+      used[name.toLowerCase()] = seen + 1;
+      name = '$name (${seen + 1})';
+    } else {
+      used[name.toLowerCase()] = 1;
+    }
+    result[i] = name;
+  }
+  return result;
+}

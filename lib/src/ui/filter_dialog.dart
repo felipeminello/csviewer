@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../model/column_meta.dart';
@@ -31,6 +33,7 @@ class _FilterDialogState extends State<FilterDialog> {
   final TextEditingController _value2 = TextEditingController();
   final TextEditingController _valueSearch = TextEditingController();
   List<String>? _distinct;
+  bool _loadingValues = false;
 
   @override
   void initState() {
@@ -43,7 +46,7 @@ class _FilterDialogState extends State<FilterDialog> {
     _values = Set<String>.from(initial?.values ?? const <String>{});
     _value.text = initial?.value ?? '';
     _value2.text = initial?.value2 ?? '';
-    if (_op == FilterOp.inSet) _loadDistinct();
+    if (_op == FilterOp.inSet) unawaited(_loadDistinct());
   }
 
   @override
@@ -54,12 +57,24 @@ class _FilterDialogState extends State<FilterDialog> {
     super.dispose();
   }
 
-  void _loadDistinct() {
-    _distinct = widget.controller.distinctValues(_column);
+  /// On a large file this is a full pass over the disk, so it runs in the
+  /// background with a spinner instead of blocking the dialog.
+  Future<void> _loadDistinct() async {
+    final column = _column;
+    setState(() {
+      _loadingValues = true;
+      _distinct = null;
+    });
+    final values = await widget.controller.distinctValues(column);
+    if (!mounted || column != _column) return;
+    setState(() {
+      _distinct = values;
+      _loadingValues = false;
+    });
   }
 
   List<FilterOp> get _opsForColumn {
-    final meta = widget.controller.table!.columns[_column];
+    final meta = widget.controller.columns[_column];
     final common = <FilterOp>[
       FilterOp.contains,
       FilterOp.notContains,
@@ -114,7 +129,7 @@ class _FilterDialogState extends State<FilterDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final table = widget.controller.table!;
+    final columns = widget.controller.columns;
     final ops = _opsForColumn;
     if (!ops.contains(_op)) _op = ops.first;
 
@@ -151,8 +166,8 @@ class _FilterDialogState extends State<FilterDialog> {
                 decoration: const InputDecoration(labelText: 'Coluna'),
                 isExpanded: true,
                 items: [
-                  for (var i = 0; i < table.columnCount; i++)
-                    DropdownMenuItem(value: i, child: Text(table.columns[i].name)),
+                  for (var i = 0; i < columns.length; i++)
+                    DropdownMenuItem(value: i, child: Text(columns[i].name)),
                 ],
                 onChanged: (value) {
                   if (value == null) return;
@@ -160,7 +175,7 @@ class _FilterDialogState extends State<FilterDialog> {
                     _column = value;
                     _values = <String>{};
                     _distinct = null;
-                    if (_op == FilterOp.inSet) _loadDistinct();
+                    if (_op == FilterOp.inSet) unawaited(_loadDistinct());
                   });
                 },
               ),
@@ -176,7 +191,7 @@ class _FilterDialogState extends State<FilterDialog> {
                   if (value == null) return;
                   setState(() {
                     _op = value;
-                    if (_op == FilterOp.inSet && _distinct == null) _loadDistinct();
+                    if (_op == FilterOp.inSet && _distinct == null) unawaited(_loadDistinct());
                   });
                 },
               ),
@@ -189,7 +204,7 @@ class _FilterDialogState extends State<FilterDialog> {
                   autofocus: true,
                   decoration: InputDecoration(
                     labelText: _op.needsSecondValue ? 'De' : 'Valor',
-                    hintText: _hintFor(table.columns[_column]),
+                    hintText: _hintFor(columns[_column]),
                   ),
                   onChanged: (_) => setState(() {}),
                   onSubmitted: (_) => _submit(),
@@ -244,6 +259,21 @@ class _FilterDialogState extends State<FilterDialog> {
   }
 
   Widget _valuePicker(BuildContext context) {
+    if (_loadingValues) {
+      return const SizedBox(
+        height: 300,
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)),
+              SizedBox(height: 10),
+              Text('Lendo os valores da coluna…'),
+            ],
+          ),
+        ),
+      );
+    }
     final all = _distinct ?? const <String>[];
     final needle = _valueSearch.text.toLowerCase();
     final shown = needle.isEmpty

@@ -1,56 +1,98 @@
-import 'dart:io';
+import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 
+import '../data/csv_source.dart';
 import '../model/column_meta.dart';
-import '../model/csv_table.dart';
 import '../model/filter.dart';
+import '../model/sort_spec.dart';
 import '../services/csv_loader.dart';
-import '../services/csv_writer.dart';
+import '../services/csv_worker.dart' show kMaxSortableRows;
 
-class SortSpec {
-  const SortSpec(this.column, {this.ascending = true});
-  final int column;
-  final bool ascending;
-}
+export '../model/sort_spec.dart' show SortSpec;
 
 /// Everything the UI reads and mutates. One controller per window.
+///
+/// It owns the filter chain, the sort keys, column visibility and the
+/// selection; the rows themselves live in a [CsvSource], which is either the
+/// whole file in memory or an indexed reader over a file too big for that.
 class AppController extends ChangeNotifier {
-  CsvTable? _table;
+  CsvSource? _source;
   LoadOptions _options = const LoadOptions();
   bool _loading = false;
   String? _error;
+  String? _notice;
+
+  bool _busy = false;
+  double _busyProgress = 0;
+  int _viewGeneration = 0;
+  Timer? _viewDebounce;
 
   final List<FilterRule> _filters = <FilterRule>[];
   final List<SortSpec> _sorts = <SortSpec>[];
   String _quickSearch = '';
 
-  List<int> _viewRows = <int>[];
   List<bool> _columnVisible = <bool>[];
   List<double> _columnWidths = <double>[];
-  final Map<int, List<Object?>> _sortKeyCache = <int, List<Object?>>{};
+  bool _widthsMeasured = false;
 
-  int? _selectedRow; // index into _viewRows
+  int? _selectedRowIndex; // position in the view
+  LoadedRow? _selectedRow;
   bool _showInspector = false;
 
-  CsvTable? get table => _table;
+  CsvSource? get source => _source;
   LoadOptions get options => _options;
   bool get loading => _loading;
   String? get error => _error;
-  bool get hasDocument => _table != null;
+  String? get notice => _notice;
+  bool get hasDocument => _source != null;
+
+  bool get busy => _busy;
+  double get busyProgress => _busyProgress;
 
   List<FilterRule> get filters => List.unmodifiable(_filters);
   List<SortSpec> get sorts => List.unmodifiable(_sorts);
   String get quickSearch => _quickSearch;
-  List<int> get viewRows => _viewRows;
-  int get totalRows => _table?.rowCount ?? 0;
-  int get visibleRowCount => _viewRows.length;
+
+  List<ColumnMeta> get columns => _source?.columns ?? const <ColumnMeta>[];
+  int get columnCount => columns.length;
+  String get fileName => _source?.fileName ?? '';
+  String? get filePath => _source?.filePath;
+  String get delimiter => _source?.delimiter ?? ',';
+  String get encodingName => _source?.encodingName ?? '';
+  int get fileSizeBytes => _source?.fileSizeBytes ?? 0;
+  bool get isStreaming => _source?.isStreaming ?? false;
+  bool get indexing => _source?.indexing ?? false;
+  double get indexProgress => _source?.indexProgress ?? 1;
+  int get sortLimit => _source?.sortLimit ?? 0;
+
+  int get totalRows => _source?.totalRows ?? 0;
+  int get visibleRowCount => _source?.viewRowCount ?? 0;
   bool get isFiltered => _filters.any((f) => f.enabled) || _quickSearch.isNotEmpty;
 
   bool get showInspector => _showInspector;
-  int? get selectedViewIndex => _selectedRow;
-  int? get selectedSourceRow =>
-      (_selectedRow != null && _selectedRow! < _viewRows.length) ? _viewRows[_selectedRow!] : null;
+  int? get selectedViewIndex => _selectedRowIndex;
+  LoadedRow? get selectedRow => _selectedRow;
+
+  /// Row at a view position, or null while it is still being read from disk.
+  LoadedRow? rowIfReady(int viewIndex) => _source?.rowIfReady(viewIndex);
+
+  /// Tells the source which rows the grid is about to paint.
+  void ensureRange(int start, int end) => _source?.ensureRange(start, end);
+
+  /// Row at a view position, reading it from disk if necessary.
+  Future<LoadedRow?> rowAt(int viewIndex) async => _source?.rowAt(viewIndex);
+
+  /// Completes once the file is fully indexed and no filter/sort pass is
+  /// pending or running — i.e. the view on screen is final.
+  Future<void> settle({Duration timeout = const Duration(seconds: 60)}) async {
+    final deadline = DateTime.now().add(timeout);
+    while (indexing || (_viewDebounce?.isActive ?? false) || _busy) {
+      if (DateTime.now().isAfter(deadline)) return;
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+    }
+  }
 
   List<int> get visibleColumns {
     final result = <int>[];
@@ -79,13 +121,15 @@ class AppController extends ChangeNotifier {
 
   // ---------------------------------------------------------------- loading
 
-  Future<void> openPath(String path, {LoadOptions? options}) async {
+  Future<void> openPath(String path, {LoadOptions? options, int sortLimit = kMaxSortableRows}) async {
+    final opts = options ?? const LoadOptions();
     _loading = true;
     _error = null;
+    _notice = null;
     notifyListeners();
     try {
-      final loaded = await loadCsvFile(path, options ?? const LoadOptions());
-      _adopt(loaded, options ?? const LoadOptions());
+      final source = await openCsvSource(path, opts, sortLimit: sortLimit);
+      _adopt(source, opts);
     } catch (e) {
       _error = 'Não foi possível abrir o arquivo: $e';
       _loading = false;
@@ -93,37 +137,24 @@ class AppController extends ChangeNotifier {
     }
   }
 
-  Future<void> openBytes(Uint8List bytes, String fileName, {LoadOptions? options}) async {
-    _loading = true;
-    _error = null;
-    notifyListeners();
-    try {
-      final loaded = await loadCsvBytes(bytes, fileName, options ?? const LoadOptions());
-      _adopt(loaded, options ?? const LoadOptions());
-    } catch (e) {
-      _error = 'Não foi possível abrir o arquivo: $e';
-      _loading = false;
-      notifyListeners();
-    }
-  }
-
-  /// Re-parses the current file with different delimiter / encoding / header
-  /// settings, keeping filters and sorting when the columns still line up.
+  /// Re-reads the current file with different delimiter / encoding / header /
+  /// mode settings, keeping filters and sorting when the columns still match.
   Future<void> reload(LoadOptions options) async {
-    final path = _table?.filePath;
+    final path = _source?.filePath;
     if (path == null) return;
-    final previousNames = _table!.columns.map((c) => c.name).toList();
+    final previousNames = columns.map((c) => c.name).toList();
     final previousFilters = List<FilterRule>.from(_filters);
     final previousSorts = List<SortSpec>.from(_sorts);
+    final previousSearch = _quickSearch;
     _loading = true;
     _error = null;
     notifyListeners();
     try {
-      final loaded = await loadCsvFile(path, options);
-      _adopt(loaded, options);
-      final sameShape = loaded.columns.length == previousNames.length &&
-          List.generate(previousNames.length, (i) => loaded.columns[i].name == previousNames[i])
-              .every((ok) => ok);
+      final source = await openCsvSource(path, options);
+      _adopt(source, options);
+      final names = source.columns.map((c) => c.name).toList();
+      final sameShape = names.length == previousNames.length &&
+          List.generate(names.length, (i) => names[i] == previousNames[i]).every((ok) => ok);
       if (sameShape) {
         _filters
           ..clear()
@@ -131,8 +162,8 @@ class AppController extends ChangeNotifier {
         _sorts
           ..clear()
           ..addAll(previousSorts);
-        _recompute();
-        notifyListeners();
+        _quickSearch = previousSearch;
+        _scheduleView(immediate: true);
       }
     } catch (e) {
       _error = 'Não foi possível recarregar o arquivo: $e';
@@ -141,49 +172,81 @@ class AppController extends ChangeNotifier {
     }
   }
 
-  void _adopt(CsvTable loaded, LoadOptions options) {
-    _table = loaded;
-    _options = options.copyWith(delimiter: loaded.delimiter, hasHeaderRow: loaded.hasHeaderRow);
+  void _adopt(CsvSource source, LoadOptions options) {
+    _source?.removeListener(_onSourceChanged);
+    _source?.dispose();
+    _source = source;
+    source.addListener(_onSourceChanged);
+    _options = options.copyWith(delimiter: source.delimiter, hasHeaderRow: source.hasHeaderRow);
     _filters.clear();
     _sorts.clear();
     _quickSearch = '';
+    _selectedRowIndex = null;
     _selectedRow = null;
-    _sortKeyCache.clear();
-    _columnVisible = List<bool>.filled(loaded.columnCount, true);
-    _columnWidths = _measureColumns(loaded);
+    _columnVisible = List<bool>.filled(source.columnCount, true);
+    _columnWidths = _defaultWidths(source);
+    _widthsMeasured = false;
+    _busy = false;
     _loading = false;
-    _recompute();
+    _measureFromLoadedRows();
     notifyListeners();
   }
 
   void closeDocument() {
-    _table = null;
+    _viewDebounce?.cancel();
+    _source?.removeListener(_onSourceChanged);
+    _source?.dispose();
+    _source = null;
     _filters.clear();
     _sorts.clear();
-    _viewRows = <int>[];
     _columnVisible = <bool>[];
     _columnWidths = <double>[];
-    _sortKeyCache.clear();
     _quickSearch = '';
+    _selectedRowIndex = null;
     _selectedRow = null;
     _error = null;
+    _notice = null;
+    _busy = false;
     notifyListeners();
   }
 
-  /// Width heuristic: header plus a sample of the values, clamped so that one
-  /// long free-text column cannot push everything else off screen.
-  List<double> _measureColumns(CsvTable table) {
-    const perChar = 7.6;
-    final sample = table.rowCount < 200 ? table.rowCount : 200;
-    return List<double>.generate(table.columnCount, (c) {
-      var longest = table.columns[c].name.length + 4;
-      for (var r = 0; r < sample; r++) {
-        final length = table.cell(r, c).length;
-        if (length > longest) longest = length;
-      }
-      final width = longest * perChar + 24;
+  void _onSourceChanged() {
+    _measureFromLoadedRows();
+    notifyListeners();
+  }
+
+  List<double> _defaultWidths(CsvSource source) {
+    return List<double>.generate(source.columnCount, (c) {
+      final width = (source.columns[c].name.length + 6) * 7.6 + 24;
       return width.clamp(70.0, 340.0);
     });
+  }
+
+  /// Column widths follow the data, so they are measured from the first rows
+  /// that actually arrive — immediately in memory mode, after the first window
+  /// lands when streaming.
+  void _measureFromLoadedRows() {
+    final source = _source;
+    if (source == null || _widthsMeasured) return;
+    final sample = math.min(source.viewRowCount, 200);
+    if (sample == 0) return;
+    final longest = List<int>.generate(source.columnCount, (c) => source.columns[c].name.length + 4);
+    var seen = 0;
+    for (var i = 0; i < sample; i++) {
+      final row = source.rowIfReady(i);
+      if (row == null) continue;
+      seen++;
+      for (var c = 0; c < source.columnCount; c++) {
+        final length = row.cell(c).length;
+        if (length > longest[c]) longest[c] = length;
+      }
+    }
+    if (seen == 0) return;
+    _columnWidths = List<double>.generate(
+      source.columnCount,
+      (c) => (longest[c] * 7.6 + 24).clamp(70.0, 340.0),
+    );
+    _widthsMeasured = true;
   }
 
   // ------------------------------------------------------------------- view
@@ -215,14 +278,29 @@ class AppController extends ChangeNotifier {
   }
 
   void selectViewRow(int? index) {
-    _selectedRow = index;
+    _selectedRowIndex = index;
+    _selectedRow = index == null ? null : _source?.rowIfReady(index);
+    notifyListeners();
+    if (index != null && _selectedRow == null) _loadSelected(index);
+  }
+
+  Future<void> _loadSelected(int index) async {
+    final row = await _source?.rowAt(index);
+    if (_selectedRowIndex != index) return;
+    _selectedRow = row;
     notifyListeners();
   }
 
   void setQuickSearch(String value) {
     if (_quickSearch == value) return;
     _quickSearch = value;
-    _recompute();
+    notifyListeners();
+    _scheduleView();
+  }
+
+  void clearNotice() {
+    if (_notice == null) return;
+    _notice = null;
     notifyListeners();
   }
 
@@ -257,168 +335,140 @@ class AppController extends ChangeNotifier {
         _sorts.add(SortSpec(column, ascending: true));
       }
     }
-    _recompute();
-    notifyListeners();
+    _scheduleView(immediate: true);
   }
 
   void setSort(int column, bool ascending) {
     _sorts
       ..clear()
       ..add(SortSpec(column, ascending: ascending));
-    _recompute();
-    notifyListeners();
+    _scheduleView(immediate: true);
   }
 
   void clearSort() {
+    if (_sorts.isEmpty) return;
     _sorts.clear();
-    _recompute();
-    notifyListeners();
+    _scheduleView(immediate: true);
   }
 
   // ---------------------------------------------------------------- filters
 
   void addFilter(FilterRule rule) {
     _filters.add(rule);
-    _recompute();
-    notifyListeners();
+    _scheduleView(immediate: true);
   }
 
   void updateFilter(int index, FilterRule rule) {
     if (index < 0 || index >= _filters.length) return;
     _filters[index] = rule;
-    _recompute();
-    notifyListeners();
+    _scheduleView(immediate: true);
   }
 
   void removeFilter(int index) {
     if (index < 0 || index >= _filters.length) return;
     _filters.removeAt(index);
-    _recompute();
-    notifyListeners();
+    _scheduleView(immediate: true);
   }
 
   void toggleFilterEnabled(int index) {
     if (index < 0 || index >= _filters.length) return;
     _filters[index] = _filters[index].copyWith(enabled: !_filters[index].enabled);
-    _recompute();
-    notifyListeners();
+    _scheduleView(immediate: true);
   }
 
   void clearFilters() {
     if (_filters.isEmpty && _quickSearch.isEmpty) return;
     _filters.clear();
     _quickSearch = '';
-    _recompute();
-    notifyListeners();
+    _scheduleView(immediate: true);
   }
 
   // ------------------------------------------------------------- pipeline
 
-  void _recompute() {
-    final table = _table;
-    if (table == null) {
-      _viewRows = <int>[];
-      return;
+  /// Recomputing a view over a huge file is a full pass over the disk, so
+  /// typing in the search box is debounced; explicit actions run at once.
+  void _scheduleView({bool immediate = false}) {
+    _viewDebounce?.cancel();
+    final delay = immediate
+        ? Duration.zero
+        : Duration(milliseconds: isStreaming ? 500 : 60);
+    if (delay == Duration.zero) {
+      unawaited(_applyView());
+    } else {
+      _viewDebounce = Timer(delay, () => unawaited(_applyView()));
     }
-    final program = FilterProgram.compile(_filters, table.columns);
-    final needle = _quickSearch.toLowerCase();
-    final rows = table.rows;
-    final result = <int>[];
-    for (var i = 0; i < rows.length; i++) {
-      final row = rows[i];
-      if (!program.matches(row)) continue;
-      if (needle.isNotEmpty && !_rowContains(row, needle)) continue;
-      result.add(i);
-    }
-    if (_sorts.isNotEmpty) {
-      final keySets = <List<Object?>>[];
-      for (final spec in _sorts) {
-        keySets.add(_sortKeys(table, spec.column));
+    notifyListeners();
+  }
+
+  Future<void> applyViewNow() => _applyView();
+
+  Future<void> _applyView() async {
+    final source = _source;
+    if (source == null) return;
+    final generation = ++_viewGeneration;
+    _busy = true;
+    _busyProgress = 0;
+    notifyListeners();
+    try {
+      final result = await source.applyView(
+        _filters,
+        _quickSearch,
+        _sorts,
+        onProgress: (value) {
+          if (generation != _viewGeneration) return;
+          _busyProgress = value;
+          notifyListeners();
+        },
+      );
+      if (generation != _viewGeneration || result.cancelled) return;
+      if (!result.sortApplied && _sorts.isNotEmpty) {
+        _sorts.clear();
+        _notice = 'Ordenação disponível para até ${_formatCount(source.sortLimit)} registros. '
+            'Filtre antes de ordenar.';
       }
-      result.sort((a, b) {
-        for (var s = 0; s < _sorts.length; s++) {
-          final keys = keySets[s];
-          final comparison = _compareKeys(keys[a], keys[b]);
-          if (comparison != 0) {
-            return _sorts[s].ascending ? comparison : -comparison;
-          }
+    } catch (e) {
+      if (generation == _viewGeneration) _error = 'Falha ao aplicar filtros: $e';
+    } finally {
+      if (generation == _viewGeneration) {
+        _busy = false;
+        if (_selectedRowIndex != null && _selectedRowIndex! >= visibleRowCount) {
+          _selectedRowIndex = visibleRowCount == 0 ? null : visibleRowCount - 1;
+          _selectedRow = null;
         }
-        return a.compareTo(b); // stable: keep original file order on ties
-      });
-    }
-    _viewRows = result;
-    if (_selectedRow != null && _selectedRow! >= _viewRows.length) {
-      _selectedRow = _viewRows.isEmpty ? null : _viewRows.length - 1;
-    }
-  }
-
-  bool _rowContains(List<String> row, String needle) {
-    for (final cell in row) {
-      if (cell.toLowerCase().contains(needle)) return true;
-    }
-    return false;
-  }
-
-  /// Sort keys are computed once per column and reused, which keeps repeated
-  /// sorts on large files instant.
-  List<Object?> _sortKeys(CsvTable table, int column) {
-    final cached = _sortKeyCache[column];
-    if (cached != null) return cached;
-    final meta = table.columns[column];
-    final keys = List<Object?>.filled(table.rowCount, null);
-    for (var i = 0; i < table.rowCount; i++) {
-      final raw = table.cell(i, column);
-      if (raw.trim().isEmpty) {
-        keys[i] = null;
-        continue;
-      }
-      switch (meta.type) {
-        case ColumnType.number:
-          keys[i] = meta.number(raw);
-          break;
-        case ColumnType.date:
-          keys[i] = meta.date(raw)?.millisecondsSinceEpoch.toDouble();
-          break;
-        case ColumnType.text:
-          keys[i] = raw.toLowerCase();
-          break;
+        if (_selectedRowIndex != null) unawaited(_loadSelected(_selectedRowIndex!));
+        notifyListeners();
       }
     }
-    _sortKeyCache[column] = keys;
-    return keys;
   }
 
-  int _compareKeys(Object? a, Object? b) {
-    if (a == null || b == null) {
-      if (a == null && b == null) return 0;
-      return a == null ? 1 : -1; // blanks last
+  static String _formatCount(int value) {
+    final text = value.toString();
+    final buffer = StringBuffer();
+    for (var i = 0; i < text.length; i++) {
+      if (i > 0 && (text.length - i) % 3 == 0) buffer.write('.');
+      buffer.write(text[i]);
     }
-    if (a is double && b is double) return a.compareTo(b);
-    if (a is String && b is String) return a.compareTo(b);
-    return a.toString().compareTo(b.toString());
+    return buffer.toString();
   }
 
   // ------------------------------------------------------------------ export
 
-  String exportCsv({bool onlyVisibleColumns = true}) {
-    final table = _table!;
-    final columns = onlyVisibleColumns
-        ? visibleColumns
-        : List<int>.generate(table.columnCount, (i) => i);
-    return encodeCsv(
-      table: table,
-      rowIndices: _viewRows,
-      columnIndices: columns,
-      delimiter: table.delimiter,
-      includeHeader: true,
-    );
+  Future<int> export(String path, {bool onlyVisibleColumns = true}) {
+    final source = _source!;
+    final columnIndices =
+        onlyVisibleColumns ? visibleColumns : List<int>.generate(source.columnCount, (i) => i);
+    return source.exportTo(path, columnIndices);
   }
 
-  Future<void> writeExport(String path, {bool onlyVisibleColumns = true}) async {
-    final content = exportCsv(onlyVisibleColumns: onlyVisibleColumns);
-    await File(path).writeAsString(content);
-  }
+  /// Distinct values for the value-picker filter.
+  Future<List<String>> distinctValues(int column) =>
+      _source?.distinctValues(column) ?? Future.value(const <String>[]);
 
-  /// Distinct values for the value-picker filter, computed on demand.
-  List<String> distinctValues(int column) => _table?.distinctValues(column) ?? const <String>[];
+  @override
+  void dispose() {
+    _viewDebounce?.cancel();
+    _source?.removeListener(_onSourceChanged);
+    _source?.dispose();
+    super.dispose();
+  }
 }
