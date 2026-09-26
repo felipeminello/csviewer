@@ -58,6 +58,16 @@ xcodebuild -quiet \
   DEVELOPMENT_TEAM="$TEAM_ID" CODE_SIGN_IDENTITY="Apple Development" \
   "${auth[@]}" archive
 
+# Os resource bundles dos plugins (SPM) saem do build assinados com o
+# certificado de desenvolvimento, e o export não os reassina por estarem em
+# Contents/Resources: a Apple rejeita com ITMS-90284. Como só têm recursos
+# (PrivacyInfo.xcprivacy), tira a assinatura deles; a do app já os cobre.
+for bundle in "$archive"/Products/Applications/*.app/Contents/Resources/*.bundle; do
+  if codesign -d "$bundle" 2>/dev/null; then
+    codesign --remove-signature "$bundle"
+  fi
+done
+
 export_options=macos/ExportOptions.plist
 if $export_only; then
   export_options=build/macos/ExportOptions-export.plist
