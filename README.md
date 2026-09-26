@@ -21,6 +21,17 @@ Para instalar: arraste `CSViewer.app` para a pasta *Aplicativos*. O app não é 
 uma conta de desenvolvedor Apple, então na primeira execução pode ser preciso abrir com
 botão direito → *Abrir*.
 
+### Publicando na Mac App Store
+
+```bash
+ASC_ISSUER_ID=<issuer> tool/appstore.sh --build-number 2   # archive, assina e envia
+ASC_ISSUER_ID=<issuer> tool/appstore.sh --export-only      # só gera o .pkg em build/macos/export
+```
+
+O script usa a chave de API do App Store Connect em `~/.appstoreconnect/private_keys` e
+assina com o time só no archive; `flutter build macos` continua sem assinatura. Cada envio
+precisa de um build number novo (sem `--build-number`, vale o do `pubspec.yaml`).
+
 ## O que dá para fazer
 
 **Abrir**
