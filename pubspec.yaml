@@ -2,7 +2,7 @@ name: csviewer
 description: "CSViewer for macOS — open, sort and filter CSV files."
 publish_to: 'none'
 
-version: 1.0.0+2
+version: 1.0.0
 
 environment:
   sdk: ^3.13.2
