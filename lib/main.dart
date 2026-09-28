@@ -66,6 +66,7 @@ class _CsViewerAppState extends State<CsViewerApp> {
           addFilter: () => _home?.addFilter(),
           toggleInspector: _controller.toggleInspector,
           showColumns: () => _home?.showColumnsDialog(),
+          editSort: () => _home?.editSort(),
           clearSort: _controller.clearSort,
           child: child!,
         ),
@@ -90,6 +91,7 @@ class _MenuHost extends StatelessWidget {
     required this.addFilter,
     required this.toggleInspector,
     required this.showColumns,
+    required this.editSort,
     required this.clearSort,
   });
 
@@ -105,6 +107,7 @@ class _MenuHost extends StatelessWidget {
   final VoidCallback addFilter;
   final VoidCallback toggleInspector;
   final VoidCallback showColumns;
+  final VoidCallback editSort;
   final VoidCallback clearSort;
 
   @override
@@ -207,9 +210,17 @@ class _MenuHost extends StatelessWidget {
               shortcut: const SingleActivator(LogicalKeyboardKey.keyK, meta: true, shift: true),
               onSelected: controller.hasDocument ? clearFilters : null,
             ),
-            PlatformMenuItem(
-              label: 'Limpar ordenação',
-              onSelected: controller.hasDocument ? clearSort : null,
+            PlatformMenuItemGroup(
+              members: <PlatformMenuItem>[
+                PlatformMenuItem(
+                  label: 'Ordenar por várias colunas…',
+                  onSelected: controller.hasDocument ? editSort : null,
+                ),
+                PlatformMenuItem(
+                  label: 'Limpar ordenação',
+                  onSelected: controller.hasDocument ? clearSort : null,
+                ),
+              ],
             ),
           ],
         ),

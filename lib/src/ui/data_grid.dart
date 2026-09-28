@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 import '../data/csv_source.dart';
 import '../model/column_meta.dart';
 import '../state/app_controller.dart';
+import 'sort_dialog.dart';
 import 'theme.dart';
 
 typedef ColumnFilterRequest = void Function(int column, {bool byValues});
@@ -730,22 +731,42 @@ class _HeaderCell extends StatelessWidget {
 
   Future<void> _showMenu(BuildContext context, Offset position) async {
     final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
+    final sorts = controller.sorts;
+    final inChain = controller.sortPriority(column) >= 0;
     final selection = await showMenu<String>(
       context: context,
       position: RelativeRect.fromRect(
         position & const Size(1, 1),
         Offset.zero & overlay.size,
       ),
-      items: const [
-        PopupMenuItem(value: 'asc', child: Text('Ordenar crescente (A → Z)')),
-        PopupMenuItem(value: 'desc', child: Text('Ordenar decrescente (Z → A)')),
-        PopupMenuItem(value: 'clearSort', child: Text('Remover ordenação')),
-        PopupMenuDivider(),
-        PopupMenuItem(value: 'filterValues', child: Text('Filtrar por valores…')),
-        PopupMenuItem(value: 'filter', child: Text('Adicionar filtro…')),
-        PopupMenuDivider(),
-        PopupMenuItem(value: 'autofit', child: Text('Ajustar largura ao conteúdo')),
-        PopupMenuItem(value: 'hide', child: Text('Ocultar coluna')),
+      items: [
+        const PopupMenuItem(value: 'asc', child: Text('Ordenar crescente (A → Z)')),
+        const PopupMenuItem(value: 'desc', child: Text('Ordenar decrescente (Z → A)')),
+        // Só há o que desempatar se outra coluna já ordena a grade.
+        if (!inChain && sorts.isNotEmpty) ...[
+          const PopupMenuItem(
+            value: 'appendAsc',
+            child: Text('Adicionar à ordenação, crescente'),
+          ),
+          const PopupMenuItem(
+            value: 'appendDesc',
+            child: Text('Adicionar à ordenação, decrescente'),
+          ),
+        ],
+        if (inChain && sorts.length > 1)
+          const PopupMenuItem(value: 'removeSort', child: Text('Tirar esta coluna da ordenação')),
+        if (sorts.isNotEmpty)
+          PopupMenuItem(
+            value: 'clearSort',
+            child: Text(sorts.length > 1 ? 'Remover toda a ordenação' : 'Remover ordenação'),
+          ),
+        const PopupMenuItem(value: 'sortDialog', child: Text('Ordenar por várias colunas…')),
+        const PopupMenuDivider(),
+        const PopupMenuItem(value: 'filterValues', child: Text('Filtrar por valores…')),
+        const PopupMenuItem(value: 'filter', child: Text('Adicionar filtro…')),
+        const PopupMenuDivider(),
+        const PopupMenuItem(value: 'autofit', child: Text('Ajustar largura ao conteúdo')),
+        const PopupMenuItem(value: 'hide', child: Text('Ocultar coluna')),
       ],
     );
     switch (selection) {
@@ -755,8 +776,20 @@ class _HeaderCell extends StatelessWidget {
       case 'desc':
         controller.setSort(column, false);
         break;
+      case 'appendAsc':
+        controller.addSort(column, true);
+        break;
+      case 'appendDesc':
+        controller.addSort(column, false);
+        break;
+      case 'removeSort':
+        controller.removeSort(column);
+        break;
       case 'clearSort':
         controller.clearSort();
+        break;
+      case 'sortDialog':
+        if (context.mounted) await showSortDialog(context, controller, column: column);
         break;
       case 'filterValues':
         onFilterColumn(column, byValues: true);

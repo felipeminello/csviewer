@@ -371,6 +371,50 @@ class AppController extends ChangeNotifier {
     _scheduleView(immediate: true);
   }
 
+  /// Replaces the whole chain, first key first. A column repeated later in
+  /// the list could never break a tie, so only its first occurrence is kept.
+  void setSorts(List<SortSpec> sorts) {
+    final seen = <int>{};
+    final next = [
+      for (final spec in sorts)
+        if (spec.column >= 0 && spec.column < columnCount && seen.add(spec.column)) spec,
+    ];
+    if (listEquals(next, _sorts)) return;
+    _sorts
+      ..clear()
+      ..addAll(next);
+    _scheduleView(immediate: true);
+  }
+
+  /// Appends [column] as the next tie-breaker. A column already in the chain
+  /// keeps its priority and only takes the new direction.
+  void addSort(int column, bool ascending) {
+    final index = sortPriority(column);
+    if (index >= 0) {
+      if (_sorts[index].ascending == ascending) return;
+      _sorts[index] = SortSpec(column, ascending: ascending);
+    } else {
+      _sorts.add(SortSpec(column, ascending: ascending));
+    }
+    _scheduleView(immediate: true);
+  }
+
+  /// Inverts one key of the chain without changing its priority.
+  void flipSort(int column) {
+    final index = sortPriority(column);
+    if (index < 0) return;
+    _sorts[index] = SortSpec(column, ascending: !_sorts[index].ascending);
+    _scheduleView(immediate: true);
+  }
+
+  /// Drops one key; the others keep their relative order.
+  void removeSort(int column) {
+    final index = sortPriority(column);
+    if (index < 0) return;
+    _sorts.removeAt(index);
+    _scheduleView(immediate: true);
+  }
+
   void clearSort() {
     if (_sorts.isEmpty) return;
     _sorts.clear();

@@ -15,6 +15,7 @@ import 'dialogs.dart';
 import 'filter_bar.dart';
 import 'filter_dialog.dart';
 import 'inspector.dart';
+import 'sort_dialog.dart';
 import 'status_bar.dart';
 import 'theme.dart';
 
@@ -154,6 +155,8 @@ class HomePageState extends State<HomePage> {
     if (rule != null) controller.updateFilter(index, rule);
   }
 
+  Future<void> editSort() => showSortDialog(context, controller);
+
   Future<void> showColumnsDialog() async {
     if (!controller.hasDocument) return;
     await showDialog<void>(
@@ -234,6 +237,7 @@ class HomePageState extends State<HomePage> {
                         onEdit: _editFilter,
                         onAdd: () => addFilter(),
                       ),
+                    if (controller.hasDocument) SortBar(controller: controller),
                     Expanded(
                       child: controller.hasDocument
                           ? Row(

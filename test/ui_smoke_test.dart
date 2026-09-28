@@ -6,6 +6,7 @@ import 'package:csviewer/src/services/csv_loader.dart';
 import 'package:csviewer/src/state/app_controller.dart';
 import 'package:csviewer/src/ui/data_grid.dart';
 import 'package:csviewer/src/ui/home_page.dart';
+import 'package:csviewer/src/ui/sort_dialog.dart';
 import 'package:csviewer/src/ui/theme.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -113,6 +114,99 @@ void main() {
     await capture(tester, '02-ordenado');
   });
 
+  /// Coluna "pedido" na ordem em que a grade mostra os registros.
+  List<String> pedidos() => [
+        for (var i = 0; i < controller.visibleRowCount; i++) controller.rowIfReady(i)!.cell(0),
+      ];
+
+  testWidgets('Shift + clique ordena por mais de uma coluna', (tester) async {
+    await pumpApp(tester);
+    expect(find.text('nenhuma — registros na ordem do arquivo'), findsOneWidget);
+
+    await tester.tap(find.text('cidade'));
+    await tester.pumpAndSettle();
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+    await tester.tap(find.text('valor_total'));
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+    await tester.pumpAndSettle();
+
+    expect(controller.sorts, const [SortSpec(2), SortSpec(5)]);
+    // Recife e São Paulo têm dois pedidos cada: o valor desempata.
+    expect(pedidos(), [
+      'PED-00007', 'PED-00004', 'PED-00003', 'PED-00008', //
+      'PED-00001', 'PED-00006', 'PED-00002', 'PED-00005',
+    ]);
+    expect(find.text('1. cidade (A → Z)'), findsOneWidget);
+    expect(find.text('2. valor_total (Menor → maior)'), findsOneWidget);
+    expect(find.text('depois'), findsOneWidget);
+    await capture(tester, '11-ordenacao-multipla');
+
+    // O chip inverte só o próprio critério e remove só a si mesmo.
+    await tester.tap(find.text('2. valor_total (Menor → maior)'));
+    await tester.pumpAndSettle();
+    expect(controller.sorts, const [SortSpec(2), SortSpec(5, ascending: false)]);
+    expect(pedidos().sublist(2, 4), ['PED-00008', 'PED-00003']);
+
+    await tester.tap(find.descendant(
+      of: find.widgetWithText(InputChip, '1. cidade (A → Z)'),
+      matching: find.byIcon(Icons.close),
+    ));
+    await tester.pumpAndSettle();
+    expect(controller.sorts, const [SortSpec(5, ascending: false)]);
+    expect(find.text('valor_total (Maior → menor)'), findsOneWidget);
+  });
+
+  testWidgets('o menu do cabeçalho adiciona a coluna à ordenação existente', (tester) async {
+    await pumpApp(tester);
+    await tester.tap(find.text('cidade'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('status'), buttons: kSecondaryButton);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Adicionar à ordenação, decrescente'));
+    await tester.pumpAndSettle();
+    expect(controller.sorts, const [SortSpec(2), SortSpec(7, ascending: false)]);
+
+    await tester.tap(find.text('cidade'), buttons: kSecondaryButton);
+    await tester.pumpAndSettle();
+    expect(find.text('Adicionar à ordenação, crescente'), findsNothing);
+    await tester.tap(find.text('Tirar esta coluna da ordenação'));
+    await tester.pumpAndSettle();
+    expect(controller.sorts, const [SortSpec(7, ascending: false)]);
+  });
+
+  testWidgets('o diálogo monta, reordena e aplica vários critérios', (tester) async {
+    await pumpApp(tester);
+    await tester.tap(find.widgetWithText(ActionChip, 'Adicionar critério'));
+    await tester.pumpAndSettle();
+    final dialog = find.byType(SortDialog);
+    expect(find.text('Ordenar por colunas'), findsOneWidget);
+
+    Future<void> choose(String current, String option) async {
+      await tester.tap(find.descendant(of: dialog, matching: find.text(current)));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text(option).last);
+      await tester.pumpAndSettle();
+    }
+
+    // Sem ordenação, a janela já abre com um critério na primeira coluna.
+    await choose('pedido', 'cidade');
+    await tester.tap(find.descendant(of: dialog, matching: find.text('Adicionar critério')));
+    await tester.pumpAndSettle();
+    await choose('pedido', 'valor_total');
+    await choose('Menor → maior', 'Maior → menor');
+    // O valor passa a mandar, e a cidade só desempata.
+    await tester.tap(find.byTooltip('Aumentar a prioridade').last);
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    await capture(tester, '12-dialogo-ordenacao');
+
+    await tester.tap(find.text('Aplicar'));
+    await tester.pumpAndSettle();
+    expect(controller.sorts, const [SortSpec(5, ascending: false), SortSpec(2)]);
+    expect(pedidos().first, 'PED-00005');
+  });
+
   testWidgets('barra de filtros mostra a cadeia com E / OU', (tester) async {
     controller.addFilter(FilterRule(column: 2, op: FilterOp.inSet, values: {'Recife', 'São Paulo'}));
     controller.addFilter(FilterRule(column: 4, op: FilterOp.greater, value: '4'));
@@ -193,6 +287,11 @@ void main() {
 
     await open('Adicionar filtro (⌘L)', 'Novo filtro', '08-dialogo-filtro-pequeno');
     await open('Delimitador, codificação e cabeçalho', 'Opções de leitura', '09-dialogo-leitura');
+    await open(
+      'Ou Shift + clique no cabeçalho da coluna',
+      'Ordenar por colunas',
+      '13-dialogo-ordenacao-pequeno',
+    );
 
     // A janela de colunas fecha em "Concluir" (o botão da barra, nessa
     // largura, ainda mostra o rótulo).

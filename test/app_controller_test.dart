@@ -80,6 +80,44 @@ void main() {
         expect(await _column(controller, 0), ['Diego', 'Bruno', 'Elisa', 'Ana', 'Carla']);
       });
 
+      test('adicionar critério desempata sem mexer no primeiro', () async {
+        controller.setSort(1, true); // cidade
+        controller.addSort(2, false); // idade, maior primeiro
+        expect(controller.sorts, const [SortSpec(1), SortSpec(2, ascending: false)]);
+        expect(await _column(controller, 0), ['Diego', 'Elisa', 'Bruno', 'Carla', 'Ana']);
+
+        // Coluna que já ordena só troca de direção, sem perder a prioridade.
+        controller.addSort(1, false);
+        expect(controller.sorts,
+            const [SortSpec(1, ascending: false), SortSpec(2, ascending: false)]);
+        expect(await _column(controller, 0), ['Carla', 'Ana', 'Elisa', 'Bruno', 'Diego']);
+      });
+
+      test('inverter e remover um critério preserva os demais', () async {
+        controller.setSorts(const [SortSpec(1), SortSpec(2)]);
+        controller.flipSort(2);
+        expect(controller.sorts, const [SortSpec(1), SortSpec(2, ascending: false)]);
+
+        controller.removeSort(1);
+        expect(controller.sorts, const [SortSpec(2, ascending: false)]);
+        expect(await _column(controller, 2), ['52', '45', '34', '28', '28']);
+      });
+
+      test('substituir a cadeia descarta colunas repetidas e inexistentes', () async {
+        controller.setSorts(const [
+          SortSpec(2),
+          SortSpec(0, ascending: false),
+          SortSpec(2, ascending: false),
+          SortSpec(99),
+        ]);
+        expect(controller.sorts, const [SortSpec(2), SortSpec(0, ascending: false)]);
+        expect(await _column(controller, 0), ['Diego', 'Bruno', 'Ana', 'Carla', 'Elisa']);
+
+        controller.setSorts(const []);
+        expect(controller.sorts, isEmpty);
+        expect(await _column(controller, 0), ['Ana', 'Bruno', 'Carla', 'Diego', 'Elisa']);
+      });
+
       test('filtra por valor de coluna', () async {
         controller.addFilter(FilterRule(column: 1, op: FilterOp.equals, value: 'são paulo'));
         expect(await _column(controller, 0), ['Ana', 'Carla']);

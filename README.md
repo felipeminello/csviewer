@@ -1,8 +1,9 @@
 # CSViewer para macOS
 
 Visualizador de CSV para macOS, inspirado no [CSViewer](https://csviewer.com/) do Windows:
-abrir um arquivo, ver os registros em grade, **ordenar por coluna** (crescente/decrescente) e
-**filtrar por valores de coluna**, encadeando quantos filtros forem necessários.
+abrir um arquivo, ver os registros em grade, **ordenar por uma ou mais colunas**
+(crescente/decrescente) e **filtrar por valores de coluna**, encadeando quantos filtros forem
+necessários.
 
 Arquivos de **vários gigabytes** são abertos sem serem carregados na memória — veja
 [Arquivos grandes](#arquivos-grandes).
@@ -61,8 +62,14 @@ precisa de um build number novo (sem `--build-number`, vale o do `pubspec.yaml`)
 
 **Ordenar**
 - Clique no cabeçalho: crescente → decrescente → sem ordenação.
-- **Shift + clique** adiciona a coluna como critério secundário (a ordem dos cliques aparece
-  como um número ao lado da seta).
+- **Várias colunas**: o primeiro critério ordena e os seguintes desempatam os registros iguais.
+  Para adicionar um critério:
+  - **Shift + clique** no cabeçalho (a prioridade aparece como um número ao lado da seta);
+  - botão direito no cabeçalho → *Adicionar à ordenação*;
+  - *Adicionar critério* na barra **Ordenação**, logo abaixo dos filtros.
+- Na barra **Ordenação** cada critério é um chip: clique para inverter a direção, × para
+  tirá-lo. *Editar…* (ou *Filtros → Ordenar por várias colunas…* no menu) abre a janela em
+  que se troca a coluna e a direção de cada nível e se muda a prioridade.
 - A ordenação respeita o tipo detectado da coluna: número é comparado como número
   (inclusive `1.234,56`, `R$`, `%` e negativos entre parênteses), data como data
   (`2024-01-31` e `31/01/2024`), o resto como texto. Campos vazios vão para o fim.
@@ -170,7 +177,8 @@ lib/
   src/services/csv_loader.dart     leitura em memória (arquivos comuns)
   src/data/csv_source.dart         a fonte de dados da grade: memória ou streaming
   src/state/app_controller.dart    filtros, ordenação, colunas e a visão resultante
-  src/ui/                          grade virtualizada, barra de filtros, diálogos, painel
+  src/ui/                          grade virtualizada, barras de filtros e de ordenação,
+                                   diálogos, painel
 macos/Runner/AppDelegate.swift     ponte para arquivos abertos pelo Finder
 tool/benchmark_grande.dart         medição do modo streaming em arquivos de vários GB
 ```
