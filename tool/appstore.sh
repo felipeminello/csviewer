@@ -2,7 +2,7 @@
 # Gera o build do CSViewer para macOS e envia para o App Store Connect.
 #
 # Uso:
-#   ASC_ISSUER_ID=<issuer> tool/appstore.sh [--build-name X.Y.Z] [--build-number N] [--export-only]
+#   ASC_ISSUER_ID=<issuer> ASC_KEY_ID=<key> TEAM_ID=<team> tool/appstore.sh [--build-name X.Y.Z] [--build-number N] [--export-only]
 #
 # Sem --build-name/--build-number, usa a versão do pubspec.yaml (version: X.Y.Z+N).
 # Cada envio precisa de um build number maior que o anterior.
@@ -10,16 +10,13 @@
 #
 # Variáveis de ambiente:
 #   ASC_ISSUER_ID  obrigatória — App Store Connect → Usuários e Acesso → Integrações
-#   ASC_KEY_ID     padrão HLTPKC2CY4
+#   ASC_KEY_ID     obrigatória — mesma tela, coluna "ID da chave"
+#   TEAM_ID        obrigatória — developer.apple.com/account → Membership details
 #   ASC_KEY_PATH   padrão ~/.appstoreconnect/private_keys/AuthKey_<ASC_KEY_ID>.p8
 
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
-
-TEAM_ID=5DJSZLRUXA
-ASC_KEY_ID=${ASC_KEY_ID:-HLTPKC2CY4}
-ASC_KEY_PATH=${ASC_KEY_PATH:-$HOME/.appstoreconnect/private_keys/AuthKey_$ASC_KEY_ID.p8}
 
 build_args=()
 export_only=false
@@ -28,12 +25,15 @@ while [[ $# -gt 0 ]]; do
     --build-name) build_args+=("--build-name=$2"); shift 2 ;;
     --build-number) build_args+=("--build-number=$2"); shift 2 ;;
     --export-only) export_only=true; shift ;;
-    -h | --help) sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h | --help) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "Opção desconhecida: $1" >&2; exit 1 ;;
   esac
 done
 
 : "${ASC_ISSUER_ID:?defina ASC_ISSUER_ID (App Store Connect → Usuários e Acesso → Integrações)}"
+: "${ASC_KEY_ID:?defina ASC_KEY_ID (App Store Connect → Usuários e Acesso → Integrações, coluna \"ID da chave\")}"
+: "${TEAM_ID:?defina TEAM_ID (developer.apple.com/account → Membership details)}"
+ASC_KEY_PATH=${ASC_KEY_PATH:-$HOME/.appstoreconnect/private_keys/AuthKey_$ASC_KEY_ID.p8}
 [[ -f $ASC_KEY_PATH ]] || { echo "Chave não encontrada: $ASC_KEY_PATH" >&2; exit 1; }
 
 archive=build/macos/CSViewer.xcarchive
