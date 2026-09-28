@@ -74,6 +74,15 @@ class HomePageState extends State<HomePage> {
     _reportError();
   }
 
+  /// Volta à tela inicial, como se o app tivesse acabado de abrir: o arquivo
+  /// sai da memória junto com filtros, ordenação, busca e seleção.
+  void closeFile() {
+    if (!controller.hasDocument) return;
+    _searchFocus.unfocus();
+    ScaffoldMessenger.of(context).clearSnackBars();
+    controller.closeDocument();
+  }
+
   Future<void> exportView() async {
     if (!controller.hasDocument) return;
     final suggestion = controller.fileName.replaceAll(RegExp(r'\.[^.]*$'), '');
@@ -214,6 +223,7 @@ class HomePageState extends State<HomePage> {
                       onOpen: openFile,
                       onReload: reloadFile,
                       onExport: exportView,
+                      onClose: closeFile,
                       onAddFilter: () => addFilter(),
                       onColumns: showColumnsDialog,
                       onOptions: showReadOptions,
@@ -330,6 +340,7 @@ class _Toolbar extends StatelessWidget {
     required this.onOpen,
     required this.onReload,
     required this.onExport,
+    required this.onClose,
     required this.onAddFilter,
     required this.onColumns,
     required this.onOptions,
@@ -341,6 +352,7 @@ class _Toolbar extends StatelessWidget {
   final VoidCallback onOpen;
   final VoidCallback onReload;
   final VoidCallback onExport;
+  final VoidCallback onClose;
   final VoidCallback onAddFilter;
   final VoidCallback onColumns;
   final VoidCallback onOptions;
@@ -385,7 +397,9 @@ class _Toolbar extends StatelessWidget {
           final searchWidth = constraints.maxWidth < 620 ? 150.0 : 240.0;
           // Os botões têm prioridade sobre o nome do arquivo: ele fica só com a
           // sobra, e os rótulos viram ícones antes de qualquer corte.
-          final free = constraints.maxWidth - searchWidth;
+          final free = constraints.maxWidth -
+              searchWidth -
+              (hasDocument ? _toolIconButtonWidth : 0); // botão de fechar
           final labelled =
               _labelledClusterWidth(context, buttons, withInspector: hasDocument);
           final compact = free < labelled;
@@ -439,6 +453,15 @@ class _Toolbar extends StatelessWidget {
                       ),
                     ),
                   ),
+                ),
+              // Fora do bloco que vira ícones: fechar fica sempre à vista, colado
+              // ao nome do arquivo como o "x" de uma aba.
+              if (hasDocument)
+                IconButton(
+                  iconSize: 18,
+                  tooltip: 'Fechar arquivo (⌘W)',
+                  onPressed: onClose,
+                  icon: const Icon(Icons.close),
                 ),
               SizedBox(
                 width: searchWidth,

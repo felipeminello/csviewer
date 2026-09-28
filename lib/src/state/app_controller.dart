@@ -27,6 +27,7 @@ class AppController extends ChangeNotifier {
   bool _busy = false;
   double _busyProgress = 0;
   int _viewGeneration = 0;
+  int _loadGeneration = 0;
   Timer? _viewDebounce;
 
   final List<FilterRule> _filters = <FilterRule>[];
@@ -123,14 +124,17 @@ class AppController extends ChangeNotifier {
 
   Future<void> openPath(String path, {LoadOptions? options, int sortLimit = kMaxSortableRows}) async {
     final opts = options ?? const LoadOptions();
+    final generation = ++_loadGeneration;
     _loading = true;
     _error = null;
     _notice = null;
     notifyListeners();
     try {
       final source = await openCsvSource(path, opts, sortLimit: sortLimit);
+      if (_discardStaleLoad(generation, source)) return;
       _adopt(source, opts);
     } catch (e) {
+      if (generation != _loadGeneration) return;
       _error = 'Não foi possível abrir o arquivo: $e';
       _loading = false;
       notifyListeners();
@@ -146,11 +150,13 @@ class AppController extends ChangeNotifier {
     final previousFilters = List<FilterRule>.from(_filters);
     final previousSorts = List<SortSpec>.from(_sorts);
     final previousSearch = _quickSearch;
+    final generation = ++_loadGeneration;
     _loading = true;
     _error = null;
     notifyListeners();
     try {
       final source = await openCsvSource(path, options);
+      if (_discardStaleLoad(generation, source)) return;
       _adopt(source, options);
       final names = source.columns.map((c) => c.name).toList();
       final sameShape = names.length == previousNames.length &&
@@ -166,6 +172,7 @@ class AppController extends ChangeNotifier {
         _scheduleView(immediate: true);
       }
     } catch (e) {
+      if (generation != _loadGeneration) return;
       _error = 'Não foi possível recarregar o arquivo: $e';
       _loading = false;
       notifyListeners();
@@ -192,21 +199,40 @@ class AppController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// A file that finished opening after it was closed, or after another one
+  /// was asked for, is thrown away instead of replacing what is on screen.
+  bool _discardStaleLoad(int generation, CsvSource source) {
+    if (generation == _loadGeneration) return false;
+    source.dispose();
+    return true;
+  }
+
+  /// Drops the file and everything tied to it, leaving the controller as it
+  /// is right after the app starts. Opens and filter passes still running are
+  /// discarded when they finish.
   void closeDocument() {
+    _loadGeneration++;
+    _viewGeneration++;
     _viewDebounce?.cancel();
+    _viewDebounce = null;
     _source?.removeListener(_onSourceChanged);
     _source?.dispose();
     _source = null;
-    _filters.clear();
-    _sorts.clear();
-    _columnVisible = <bool>[];
-    _columnWidths = <double>[];
-    _quickSearch = '';
-    _selectedRowIndex = null;
-    _selectedRow = null;
+    _options = const LoadOptions();
+    _loading = false;
     _error = null;
     _notice = null;
     _busy = false;
+    _busyProgress = 0;
+    _filters.clear();
+    _sorts.clear();
+    _quickSearch = '';
+    _columnVisible = <bool>[];
+    _columnWidths = <double>[];
+    _widthsMeasured = false;
+    _selectedRowIndex = null;
+    _selectedRow = null;
+    _showInspector = false;
     notifyListeners();
   }
 

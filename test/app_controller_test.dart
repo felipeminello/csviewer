@@ -186,6 +186,57 @@ void main() {
         await controller.settle();
         expect(controller.columnCount, 1);
       });
+
+      test('fechar o arquivo volta ao estado de quando o app abre', () async {
+        controller.addFilter(FilterRule(column: 1, op: FilterOp.equals, value: 'Recife'));
+        controller.toggleSort(2);
+        controller.setQuickSearch('e');
+        controller.setColumnVisible(3, false);
+        controller.toggleInspector();
+        await controller.settle();
+        controller.selectViewRow(0);
+
+        controller.closeDocument();
+        final fresh = AppController();
+        addTearDown(fresh.dispose);
+        expect(controller.hasDocument, isFalse);
+        expect(controller.source, isNull);
+        expect(controller.filters, isEmpty);
+        expect(controller.sorts, isEmpty);
+        expect(controller.quickSearch, '');
+        expect(controller.visibleColumns, isEmpty);
+        expect(controller.selectedViewIndex, isNull);
+        expect(controller.selectedRow, isNull);
+        expect(controller.showInspector, fresh.showInspector);
+        expect(controller.options.mode, fresh.options.mode);
+        expect(controller.options.delimiter, fresh.options.delimiter);
+        expect(controller.loading, isFalse);
+        expect(controller.busy, isFalse);
+        expect(controller.error, isNull);
+        expect(controller.totalRows, 0);
+
+        // Um filtro que ainda rodava não ressuscita nada nem deixa erro.
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        expect(controller.error, isNull);
+        expect(controller.hasDocument, isFalse);
+
+        // E o próximo arquivo abre limpo.
+        await controller.openPath(path, options: LoadOptions(mode: mode));
+        await controller.settle();
+        expect(controller.visibleRowCount, 5);
+        expect(controller.visibleColumns.length, 5);
+      });
+
+      test('fechar durante a abertura descarta o arquivo que ainda carregava', () async {
+        controller.closeDocument();
+        final opening = controller.openPath(path, options: LoadOptions(mode: mode));
+        expect(controller.loading, isTrue);
+        controller.closeDocument();
+        await opening;
+        expect(controller.hasDocument, isFalse);
+        expect(controller.loading, isFalse);
+        expect(controller.error, isNull);
+      });
     });
   }
 }

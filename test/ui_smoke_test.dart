@@ -156,6 +156,12 @@ void main() {
       expect(tester.getRect(button).right,
           lessThanOrEqualTo(tester.getRect(viewport.first).right + 0.5),
           reason: 'Exportar cortado em $width');
+      // Fechar fica fora do bloco rolável, entre o nome e a busca.
+      final close = find.byTooltip('Fechar arquivo (⌘W)');
+      expect(close, findsOneWidget, reason: 'sem botão Fechar em $width');
+      expect(tester.getRect(close).right,
+          lessThanOrEqualTo(tester.getRect(find.byType(TextField).first).left + 0.5),
+          reason: 'Fechar sobreposto à busca em $width');
       // A busca tem padding próprio: precisa caber nos 46px da barra.
       expect(tester.getSize(find.byType(TextField).first).height, lessThan(42));
       expect(tester.takeException(), isNull);
@@ -394,6 +400,26 @@ void main() {
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
     expect(find.text('status'), findsOneWidget);
+  });
+
+  testWidgets('o botão Fechar volta à tela inicial', (tester) async {
+    await pumpApp(tester);
+    await tester.enterText(find.byType(TextField).last, 'recife');
+    controller.toggleInspector();
+    await tester.pumpAndSettle();
+    expect(controller.visibleRowCount, 2);
+
+    await tester.tap(find.byTooltip('Fechar arquivo (⌘W)'));
+    await tester.pumpAndSettle();
+    expect(controller.hasDocument, isFalse);
+    expect(find.text('Abrir arquivo…'), findsOneWidget);
+    expect(find.byType(DataGrid), findsNothing);
+    expect(find.text('pedidos.csv'), findsNothing);
+    expect(tester.widget<TextField>(find.byType(TextField).last).controller!.text, isEmpty);
+    // Sem documento não há o que fechar: o botão some, como o do painel.
+    expect(find.byTooltip('Fechar arquivo (⌘W)'), findsNothing);
+    expect(tester.takeException(), isNull);
+    await capture(tester, '11-fechado');
   });
 
   testWidgets('busca rápida filtra e destaca', (tester) async {
