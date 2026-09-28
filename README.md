@@ -17,9 +17,23 @@ flutter run -d macos          # desenvolvimento
 flutter build macos --release # gera build/macos/Build/Products/Release/CSViewer.app
 ```
 
-Para instalar: arraste `CSViewer.app` para a pasta *Aplicativos*. O app não é assinado com
-uma conta de desenvolvedor Apple, então na primeira execução pode ser preciso abrir com
-botão direito → *Abrir*.
+Para instalar: arraste `CSViewer.app` para a pasta *Aplicativos*. O `CSViewer-macos.zip` das
+releases é assinado com Developer ID e notarizado pela Apple, então abre sem aviso. Um build
+local (`flutter build macos`) tem só assinatura ad-hoc: vale na própria máquina, mas copiado
+para outro Mac o Gatekeeper bloqueia.
+
+### Assinando e notarizando para distribuir fora da App Store
+
+```bash
+flutter build macos --release
+tool/notarize.sh   # assina com Developer ID, notariza e gera build/macos/CSViewer-macos.zip
+```
+
+Usa as mesmas `ASC_ISSUER_ID`, `ASC_KEY_ID` e `TEAM_ID` da App Store e precisa do certificado
+*Developer ID Application* no keychain (Xcode → Settings → Accounts → Manage Certificates → +).
+No workflow de release, o certificado e a chave vêm dos secrets `MACOS_CERTIFICATE_P12` (o
+`.p12` em base64), `MACOS_CERTIFICATE_PASSWORD`, `ASC_KEY_P8` (conteúdo do `.p8`),
+`ASC_KEY_ID` e `ASC_ISSUER_ID`.
 
 ### Publicando na Mac App Store
 
